@@ -7,7 +7,7 @@ key alone is not enough). On first run it opens a browser for you to log in
 and consent; the resulting token is cached so later runs don't prompt again.
 
 Usage:
-    python3 fetch_subscription_handles.py -o subscriptions.csv
+    python3 fetch_subscription_handles.py
 """
 import argparse
 import csv
@@ -23,6 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 GMAIL_CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "gmail_config")
 CLIENT_SECRETS_FILE = os.path.join(GMAIL_CONFIG_DIR, "credentials.json")
 TOKEN_FILE = os.path.join(GMAIL_CONFIG_DIR, "youtube_token.pkl")
+DEFAULT_OUTPUT = os.path.join(SCRIPT_DIR, "subscriptions.csv")
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
 
 
@@ -80,7 +81,7 @@ def fetch_handles(youtube, channel_ids):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-o", "--output", default="subscriptions.csv", help="Output CSV path")
+    parser.add_argument("-o", "--output", default=DEFAULT_OUTPUT, help="Output CSV path")
     args = parser.parse_args()
 
     if not os.path.exists(CLIENT_SECRETS_FILE):

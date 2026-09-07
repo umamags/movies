@@ -1,6 +1,21 @@
 Movies
 ======
 
+Collection of tools for YouTube data collection and video manipulation.
+
+## Video Editor (NEW! 🎬)
+
+Modern React + Node.js web app for video manipulation:
+- **Combine Videos** ✅ - Merge multiple videos with quality control
+- **Split Videos** (coming soon)
+- **Extract Audio** (coming soon)
+- **Remove Audio** (coming soon)
+- **Create Movies** (coming soon)
+
+**Quick Start:** See [QUICKSTART.md](QUICKSTART.md) or [VIDEO_EDITOR.md](VIDEO_EDITOR.md)
+
+## YouTube Tools
+
 Tools for pulling video metadata from the YouTube channels I'm subscribed to
 (account: umamags@gmail.com).
 
