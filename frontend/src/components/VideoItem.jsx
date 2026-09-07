@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getThumbnail as apiGetThumbnail } from '../utils/api';
 import './VideoItem.css';
 
 export default function VideoItem({ video, isSelected, onToggle }) {
@@ -11,26 +12,9 @@ export default function VideoItem({ video, isSelected, onToggle }) {
 
   const fetchThumbnail = async () => {
     try {
-      const query = `
-        query {
-          getThumbnail(videoPath: "${video.path.replace(/"/g, '\\"')}")
-        }
-      `;
-
-      const response = await fetch('http://localhost:4000/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
-      });
-
-      if (!response.ok) {
-        setError(true);
-        return;
-      }
-
-      const data = await response.json();
-      if (data.data?.getThumbnail) {
-        setThumbnail(`http://localhost:4000${data.data.getThumbnail}`);
+      const thumbnailPath = await apiGetThumbnail(video.path);
+      if (thumbnailPath) {
+        setThumbnail(`http://localhost:4000${thumbnailPath}`);
       } else {
         setError(true);
       }

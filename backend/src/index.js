@@ -2,10 +2,11 @@ import express from 'express';
 import { ApolloServer } from 'apollo-server-express';
 import { readdir, stat, writeFile, mkdir as mkdirFs } from 'fs/promises';
 import { execSync } from 'child_process';
-import { extname, join } from 'path';
+import { extname, join, resolve } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import os from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +65,13 @@ const typeDefs = `
     getThumbnail(videoPath: String!): String!
   }
 
+  input CombineInput2 {
+    inputFolder: String!
+    filePaths: [String!]!
+    outputName: String!
+    quality: String!
+  }
+
   type Mutation {
     combineVideos(input: CombineInput!): CombineResult!
     saveSettings(defaultFolder: String!, outputQuality: String!, lastOutputName: String!): Settings!
@@ -79,14 +87,15 @@ const resolvers = {
   Query: {
     listVideos: async (_, { folder }) => {
       try {
-        const files = await readdir(folder);
+        const expandedFolder = expandPath(folder);
+        const files = await readdir(expandedFolder);
         const videos = [];
 
         for (const file of files) {
           const ext = extname(file).toLowerCase();
           if (!SUPPORTED_FORMATS.includes(ext)) continue;
 
-          const filePath = join(folder, file);
+          const filePath = join(expandedFolder, file);
           const fileStats = await stat(filePath);
 
           try {
@@ -128,10 +137,14 @@ const resolvers = {
   Mutation: {
     combineVideos: async (_, { input }) => {
       const operationId = uuidv4();
-      const outputFolder = `${OUTPUT_BASE}/home_movies/output`;
+
+      // Create output folder in the same parent directory as the input folder
+      const expandedInputFolder = expandPath(input.inputFolder);
+      const parentDir = expandedInputFolder.substring(0, expandedInputFolder.lastIndexOf('/'));
+      const outputFolder = join(parentDir, 'output');
 
       try {
-        await mkdirAsync(outputFolder, { recursive: true });
+        await mkdirFs(outputFolder, { recursive: true });
 
         const outputPath = join(outputFolder, `${input.outputName}.mp4`);
         const concatFile = join(THUMBNAIL_DIR, `concat_${operationId}.txt`);
@@ -183,6 +196,15 @@ const resolvers = {
 };
 
 // Helper functions
+function expandPath(filePath) {
+  if (filePath.startsWith('~')) {
+    // Remove ~ and any leading slash: ~/path -> path or ~path -> path
+    const relativePath = filePath.slice(1).replace(/^\//, '');
+    return resolve(os.homedir(), relativePath);
+  }
+  return resolve(filePath);
+}
+
 function getVideoDuration(filePath) {
   try {
     const output = execSync(
@@ -219,10 +241,28 @@ async function writeFileAsync(filePath, content) {
 
 // Server setup
 const app = express();
+
+// Enable CORS
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 const server = new ApolloServer({ typeDefs, resolvers });
 
 await server.start();
 server.applyMiddleware({ app });
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Serve thumbnails
 app.use('/thumbnails', express.static(THUMBNAIL_DIR));

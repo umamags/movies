@@ -20,6 +20,38 @@
   gap: 10px;
 }
 
+.folder-actions {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.btn-list-videos {
+  padding: 10px 20px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  white-space: nowrap;
+}
+
+.btn-list-videos:hover:not(:disabled) {
+  background: #0056b3;
+  box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-list-videos:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .section-hint {
   font-size: 0.9rem;
   color: #666;
@@ -134,4 +166,15 @@
 .btn-lg {
   padding: 16px 32px;
   font-size: 18px;
+}
+
+code {
+  display: block;
+  background: rgba(0, 0, 0, 0.1);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  margin-top: 8px;
+  white-space: pre-wrap;
 }

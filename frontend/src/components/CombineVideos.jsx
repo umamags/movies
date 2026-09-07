@@ -3,6 +3,7 @@ import VideoList from './VideoList';
 import FolderPicker from './FolderPicker';
 import QualitySelector from './QualitySelector';
 import ProgressBar from './ProgressBar';
+import { listVideos, combineVideos as apiCombineVideos, checkBackendHealth } from '../utils/api';
 import './CombineVideos.css';
 
 export default function CombineVideos({ settings, setSettings }) {
@@ -17,38 +18,24 @@ export default function CombineVideos({ settings, setSettings }) {
   const [progressMessage, setProgressMessage] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [backendAvailable, setBackendAvailable] = useState(true);
+
+  useEffect(() => {
+    checkBackendHealth().then(setBackendAvailable);
+  }, []);
 
   const fetchVideos = async (folderPath) => {
     setLoading(true);
     setError('');
     try {
-      const query = `
-        query {
-          listVideos(folder: "${folderPath.replace(/"/g, '\\"')}")
-        }
-      `;
-
-      const response = await fetch('http://localhost:4000/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch videos');
-      }
-
-      const data = await response.json();
-      if (data.errors) {
-        throw new Error(data.errors[0].message);
-      }
-
-      const videosData = data.data.listVideos || [];
+      const data = await listVideos(folderPath);
+      const videosData = data.listVideos || [];
       setVideos(videosData);
       setSelectedVideos([]);
     } catch (err) {
       setError(`Error fetching videos: ${err.message}`);
       setVideos([]);
+      setBackendAvailable(false);
     } finally {
       setLoading(false);
     }
@@ -100,44 +87,15 @@ export default function CombineVideos({ settings, setSettings }) {
         .map(id => videos.find(v => v.id === id)?.path)
         .filter(Boolean);
 
-      const mutation = `
-        mutation {
-          combineVideos(input: {
-            inputFolder: "${folder.replace(/"/g, '\\"')}"
-            filePaths: [${selectedPaths.map(p => `"${p.replace(/"/g, '\\"')}"`).join(', ')}]
-            outputName: "${outputName.replace(/"/g, '\\"')}"
-            quality: "${quality}"
-          }) {
-            id
-            outputPath
-            duration
-            status
-          }
-        }
-      `;
-
       setProgressMessage('Preparing files...');
       setProgress(25);
 
-      const response = await fetch('http://localhost:4000/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: mutation }),
-      });
+      const result = await apiCombineVideos(folder, selectedPaths, outputName, quality);
+      const combineResult = result.combineVideos;
 
-      if (!response.ok) {
-        throw new Error('Failed to combine videos');
-      }
-
-      const data = await response.json();
-      if (data.errors) {
-        throw new Error(data.errors[0].message);
-      }
-
-      const result = data.data.combineVideos;
       setProgress(100);
       setProgressMessage('Combining complete!');
-      setSuccess(`Videos combined successfully! Output: ${result.outputPath}`);
+      setSuccess(`Videos combined successfully! Output: ${combineResult.outputPath}`);
       setSettings({
         ...settings,
         lastOutputName: outputName,
@@ -158,9 +116,25 @@ export default function CombineVideos({ settings, setSettings }) {
 
   return (
     <div className="combine-videos">
+      {!backendAvailable && (
+        <div className="alert alert-danger">
+          ⚠️ Backend server is not available. Make sure the backend is running on port 4000:
+          <code>cd backend && npm run dev</code>
+        </div>
+      )}
+
       <div className="section">
         <h2>Step 1: Select Folder</h2>
-        <FolderPicker folder={folder} onFolderChange={handleFolderChange} />
+        <div className="folder-actions">
+          <FolderPicker folder={folder} onFolderChange={handleFolderChange} />
+          <button
+            className="btn-list-videos"
+            onClick={() => fetchVideos(folder)}
+            disabled={loading || combining}
+          >
+            {loading ? '⏳ Loading...' : '📁 List Videos'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="alert alert-danger">{error}</div>}

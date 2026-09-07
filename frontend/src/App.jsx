@@ -5,7 +5,7 @@ import './App.css';
 export default function App() {
   const [activeTab, setActiveTab] = useState('combine');
   const [settings, setSettings] = useState({
-    defaultFolder: localStorage.getItem('defaultFolder') || `${process.env.HOME}/home_movies`,
+    defaultFolder: localStorage.getItem('defaultFolder') || '~/home_movies',
     outputQuality: localStorage.getItem('outputQuality') || 'auto-detect',
     lastOutputName: localStorage.getItem('lastOutputName') || '',
   });

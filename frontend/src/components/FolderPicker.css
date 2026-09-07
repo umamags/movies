@@ -46,16 +46,26 @@
   display: flex;
   gap: 10px;
   flex: 1;
-  align-items: center;
+  align-items: flex-start;
+  flex-direction: row;
+  width: 100%;
+}
+
+.folder-input-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
 }
 
 .folder-input {
-  flex: 1;
   padding: 10px;
   border: 2px solid #007bff;
   border-radius: 4px;
   font-size: 13px;
   font-family: 'Monaco', 'Courier New', monospace;
+  width: 100%;
 }
 
 .folder-input:focus {
@@ -64,8 +74,28 @@
   box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
 }
 
+.folder-input.error {
+  border-color: #dc3545;
+  background-color: #fff5f5;
+}
+
+.folder-input.error:focus {
+  box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.1);
+}
+
+.path-error {
+  color: #dc3545;
+  font-size: 12px;
+  padding: 8px;
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
 .btn-submit,
-.btn-cancel {
+.btn-cancel,
+.btn-browse {
   padding: 8px 16px;
   border: none;
   border-radius: 4px;
@@ -74,6 +104,17 @@
   cursor: pointer;
   transition: all 0.3s;
   white-space: nowrap;
+  align-self: flex-start;
+}
+
+.btn-browse {
+  background: #6f42c1;
+  color: white;
+}
+
+.btn-browse:hover {
+  background: #5a32a3;
+  box-shadow: 0 2px 8px rgba(111, 66, 193, 0.3);
 }
 
 .btn-submit {

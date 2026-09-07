@@ -1,15 +1,30 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import './FolderPicker.css';
 
 export default function FolderPicker({ folder, onFolderChange }) {
   const [inputValue, setInputValue] = useState(folder);
   const [isEditing, setIsEditing] = useState(false);
+  const [pathError, setPathError] = useState('');
+  const fileInputRef = useRef(null);
+
+  const isValidPath = (path) => {
+    // Path must be absolute (start with / or ~)
+    return path.startsWith('/') || path.startsWith('~');
+  };
 
   const handleSubmit = () => {
-    if (inputValue.trim()) {
-      onFolderChange(inputValue.trim());
-      setIsEditing(false);
+    const path = inputValue.trim();
+    if (!path) {
+      setPathError('Please enter a path');
+      return;
     }
+    if (!isValidPath(path)) {
+      setPathError('Path must be absolute (start with / or ~). Example: /Users/username/Videos or ~/Documents');
+      return;
+    }
+    setPathError('');
+    onFolderChange(path);
+    setIsEditing(false);
   };
 
   const handleKeyPress = (e) => {
@@ -17,7 +32,17 @@ export default function FolderPicker({ folder, onFolderChange }) {
       handleSubmit();
     } else if (e.key === 'Escape') {
       setInputValue(folder);
+      setPathError('');
       setIsEditing(false);
+    }
+  };
+
+  const handleFolderSelect = (e) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      // The file picker gives relative paths, so we need to guide the user
+      alert('File browser selected a folder. Please copy the full absolute path to the folder and paste it in the text field.\n\nExample: /Users/username/Videos or ~/Documents');
+      fileInputRef.current.value = '';
     }
   };
 
@@ -25,14 +50,29 @@ export default function FolderPicker({ folder, onFolderChange }) {
     <div className="folder-picker">
       {isEditing ? (
         <div className="folder-input-group">
+          <div className="folder-input-wrapper">
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => {
+                setInputValue(e.target.value);
+                setPathError('');
+              }}
+              onKeyDown={handleKeyPress}
+              autoFocus
+              placeholder="e.g., ~/Downloads or /Users/username/Videos"
+              className={`folder-input ${pathError ? 'error' : ''}`}
+            />
+            {pathError && <div className="path-error">{pathError}</div>}
+          </div>
           <input
-            type="text"
-            value={inputValue}
-            onChange={e => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            autoFocus
-            placeholder="Enter folder path..."
-            className="folder-input"
+            ref={fileInputRef}
+            type="file"
+            webkitdirectory="true"
+            directory="true"
+            multiple
+            onChange={handleFolderSelect}
+            style={{ display: 'none' }}
           />
           <button className="btn-submit" onClick={handleSubmit}>
             Load
@@ -41,6 +81,7 @@ export default function FolderPicker({ folder, onFolderChange }) {
             className="btn-cancel"
             onClick={() => {
               setInputValue(folder);
+              setPathError('');
               setIsEditing(false);
             }}
           >
