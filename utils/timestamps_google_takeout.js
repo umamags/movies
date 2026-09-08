@@ -13,6 +13,7 @@ try {
 }
 
 const config = require('./config.json');
+const { getGeoLocationAddress } = require('./getGeoLocationAddress');
 
 // Check for command line arguments
 const args = process.argv.slice(2);
@@ -64,6 +65,45 @@ function getGoogleTakeoutCreationTime(filePath) {
   }
 
   return null;
+}
+
+// Add geo location address to metadata if geoData exists
+async function addGeoLocationAddressToMetadata(filePath) {
+  const metadataPath = `${filePath}.supplemental-metadata.json`;
+
+  if (!fs.existsSync(metadataPath)) {
+    return { success: true, message: 'No metadata file' };
+  }
+
+  try {
+    const metadataContent = fs.readFileSync(metadataPath, 'utf-8');
+    const metadata = JSON.parse(metadataContent);
+
+    // Check if geoData exists with latitude and longitude
+    if (!metadata.geoData || metadata.geoData.latitude === undefined || metadata.geoData.longitude === undefined) {
+      return { success: true, message: 'No geoData with coordinates' };
+    }
+
+    // Skip if geoDataAddress already exists
+    if (metadata.geoData.geoDataAddress) {
+      return { success: true, message: 'geoDataAddress already exists' };
+    }
+
+    const { latitude, longitude } = metadata.geoData;
+
+    // Get address from LocationIQ
+    const address = await getGeoLocationAddress(latitude, longitude);
+
+    // Add address to metadata
+    metadata.geoData.geoDataAddress = address;
+
+    // Write updated metadata back to file
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+
+    return { success: true, message: `Added address: ${address}` };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 }
 
 // Extract creation time from image EXIF data
@@ -241,7 +281,7 @@ function hasTimestampPrefix(filename) {
 }
 
 // Process a single folder
-function processFolder(folderConfig) {
+async function processFolder(folderConfig) {
   const folderPath = folderConfig.folder;
   const title = folderConfig.title;
 
@@ -260,7 +300,7 @@ function processFolder(folderConfig) {
     let skippedCount = 0;
     const results = [];
 
-    files.forEach(filename => {
+    for (const filename of files) {
       const fileExt = path.extname(filename).substring(1).toLowerCase();
 
       // Skip supplemental-metadata.json files
@@ -277,6 +317,16 @@ function processFolder(folderConfig) {
       const isImage = imageFormats.includes(fileExt);
 
       try {
+        // Add geo location address to metadata if geoData exists
+        const geoResult = await addGeoLocationAddressToMetadata(filePath);
+        if (!geoResult.success) {
+          results.push({
+            status: '❌ ERROR',
+            filename: filename,
+            error: `Failed to add geo address: ${geoResult.error}`,
+          });
+          continue;
+        }
         // In remove mode, strip existing timestamp prefix
         if (removeMode) {
           const cleanFilename = filename.replace(/^\d{8}_\d{6}_/, '');
@@ -403,7 +453,7 @@ function processFolder(folderConfig) {
           error: `Failed to read metadata: ${err.message}`,
         });
       }
-    });
+    }
 
     // Display results
     console.log('\n' + '='.repeat(80));
@@ -476,6 +526,10 @@ function showUsage() {
   console.log('  3. HEIC: exiftool DateTimeOriginal, then Spotlight metadata');
   console.log('  4. Videos: ffprobe creation_time from video metadata');
   console.log('  5. Fallback: File system creation time\n');
+  console.log('Geo Location Address (requires LOCATIONIQ_ACCESS_TOKEN):');
+  console.log('  • If metadata file contains geoData with latitude/longitude,');
+  console.log('    the script will reverse-geocode it using LocationIQ API');
+  console.log('  • Adds "geoDataAddress" to the metadata JSON\n');
   console.log('Examples:');
   console.log('  node utils/timestamps_google_takeout.js                    # List timestamps, all enabled folders');
   console.log('  node utils/timestamps_google_takeout.js Cancun             # List timestamps for "Cancun"');
@@ -485,7 +539,7 @@ function showUsage() {
 }
 
 // Main function
-function main() {
+async function main() {
   if (helpMode) {
     showUsage();
     return;
@@ -525,13 +579,13 @@ function main() {
   let totalProcessed = 0;
   let totalSkipped = 0;
 
-  foldersToProcess.forEach(folderConfig => {
-    const result = processFolder(folderConfig);
+  for (const folderConfig of foldersToProcess) {
+    const result = await processFolder(folderConfig);
     if (result.success) {
       totalProcessed += result.processedCount;
       totalSkipped += result.skippedCount;
     }
-  });
+  }
 
   // Final summary
   if (foldersToProcess.length > 1) {
@@ -550,4 +604,7 @@ function main() {
 }
 
 // Run the script
-main();
+main().catch(err => {
+  console.error(`❌ Fatal error: ${err.message}`);
+  process.exit(1);
+});
