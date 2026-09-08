@@ -193,7 +193,7 @@ export default function CombineMedia({ settings, setSettings }) {
           <div className="section">
             <h2>Step 2: Select Media Files</h2>
             <p className="section-hint">
-              {selectedMedia.length} file(s) selected
+              {media.length} file(s) available, {selectedMedia.length} file(s) selected
             </p>
             <MediaList
               media={media}
