@@ -1,0 +1,14 @@
+{
+  "name": "timestamps-utility",
+  "version": "1.0.0",
+  "description": "Utility to extract and prepend creation timestamps to media files",
+  "main": "timestamps.js",
+  "scripts": {
+    "start": "node timestamps.js"
+  },
+  "dependencies": {
+    "exif-parser": "^0.1.12"
+  },
+  "author": "",
+  "license": "MIT"
+}

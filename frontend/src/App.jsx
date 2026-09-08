@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import CombineVideos from './components/CombineVideos';
+import CombineMedia from './components/CombineMedia';
 import './App.css';
 
 export default function App() {
@@ -30,6 +31,12 @@ export default function App() {
             onClick={() => setActiveTab('combine')}
           >
             Combine Videos
+          </button>
+          <button
+            className={`tab ${activeTab === 'combineMedia' ? 'active' : ''}`}
+            onClick={() => setActiveTab('combineMedia')}
+          >
+            Combine Pictures & Videos
           </button>
           <button
             className={`tab ${activeTab === 'split' ? 'active' : ''}`}
@@ -64,6 +71,9 @@ export default function App() {
         <div className="tab-content">
           {activeTab === 'combine' && (
             <CombineVideos settings={settings} setSettings={setSettings} />
+          )}
+          {activeTab === 'combineMedia' && (
+            <CombineMedia settings={settings} setSettings={setSettings} />
           )}
           {activeTab === 'split' && <div>Split Videos Coming Soon</div>}
           {activeTab === 'extractAudio' && <div>Extract Audio Coming Soon</div>}

@@ -1,0 +1,19 @@
+{
+  "timestampFormat": "YYYYMMDD_HHMMSS",
+  "supportedFormats": [
+    "mp4", "mov", "avi", "mkv", "webm",
+    "jpg", "jpeg", "png", "gif", "webp", "heic"
+  ],
+  "folders": [
+    {
+      "title": "wayanad",
+      "folder": "/Users/maheshnatarajan/workspace/movies/home_movies/wayanad",
+      "run": "no"
+    },
+    {
+      "title": "Cancun",
+      "folder": "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-Cancun-Mexico",
+      "run": "yes"
+    }
+  ]
+}

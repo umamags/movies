@@ -10,7 +10,8 @@ import os from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const SUPPORTED_FORMATS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+const SUPPORTED_VIDEO_FORMATS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+const SUPPORTED_IMAGE_FORMATS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'];
 const THUMBNAIL_DIR = join(__dirname, '../thumbnails');
 const OUTPUT_BASE = process.env.HOME || '/Users/maheshnatarajan';
 
@@ -24,6 +25,17 @@ const typeDefs = `
     filename: String!
     path: String!
     duration: Float!
+    size: Int!
+    thumbnail: String
+    format: String!
+  }
+
+  type Media {
+    id: String!
+    filename: String!
+    path: String!
+    type: String!
+    duration: Float
     size: Int!
     thumbnail: String
     format: String!
@@ -61,19 +73,22 @@ const typeDefs = `
 
   type Query {
     listVideos(folder: String!): [Video!]!
+    listMedia(folder: String!): [Media!]!
     getSettings: Settings!
     getThumbnail(videoPath: String!): String!
   }
 
-  input CombineInput2 {
+  input CombineMediaInput {
     inputFolder: String!
-    filePaths: [String!]!
+    mediaPaths: [String!]!
     outputName: String!
     quality: String!
+    photoDuration: Float!
   }
 
   type Mutation {
     combineVideos(input: CombineInput!): CombineResult!
+    combineMedia(input: CombineMediaInput!): CombineResult!
     saveSettings(defaultFolder: String!, outputQuality: String!, lastOutputName: String!): Settings!
   }
 
@@ -93,7 +108,7 @@ const resolvers = {
 
         for (const file of files) {
           const ext = extname(file).toLowerCase();
-          if (!SUPPORTED_FORMATS.includes(ext)) continue;
+          if (!SUPPORTED_VIDEO_FORMATS.includes(ext)) continue;
 
           const filePath = join(expandedFolder, file);
           const fileStats = await stat(filePath);
@@ -116,6 +131,53 @@ const resolvers = {
         return videos;
       } catch (error) {
         throw new Error(`Failed to list videos: ${error.message}`);
+      }
+    },
+
+    listMedia: async (_, { folder }) => {
+      try {
+        const expandedFolder = expandPath(folder);
+        const files = await readdir(expandedFolder);
+        const media = [];
+
+        for (const file of files) {
+          const ext = extname(file).toLowerCase();
+          const filePath = join(expandedFolder, file);
+          const fileStats = await stat(filePath);
+
+          if (SUPPORTED_VIDEO_FORMATS.includes(ext)) {
+            try {
+              const duration = getVideoDuration(filePath);
+              media.push({
+                id: uuidv4(),
+                filename: file,
+                path: filePath,
+                type: 'video',
+                duration,
+                size: fileStats.size,
+                format: ext.substring(1),
+              });
+            } catch (e) {
+              console.error(`Failed to get duration for video ${file}:`, e.message);
+            }
+          } else if (SUPPORTED_IMAGE_FORMATS.includes(ext)) {
+            media.push({
+              id: uuidv4(),
+              filename: file,
+              path: filePath,
+              type: 'image',
+              duration: null,
+              size: fileStats.size,
+              format: ext.substring(1),
+            });
+          }
+        }
+
+        // Sort chronologically by filename
+        media.sort((a, b) => a.filename.localeCompare(b.filename));
+        return media;
+      } catch (error) {
+        throw new Error(`Failed to list media: ${error.message}`);
       }
     },
 
@@ -181,6 +243,73 @@ const resolvers = {
         };
       } catch (error) {
         throw new Error(`Failed to combine videos: ${error.message}`);
+      }
+    },
+
+    combineMedia: async (_, { input }) => {
+      const operationId = uuidv4();
+      const expandedInputFolder = expandPath(input.inputFolder);
+      const parentDir = expandedInputFolder.substring(0, expandedInputFolder.lastIndexOf('/'));
+      const outputFolder = join(parentDir, 'output');
+
+      try {
+        await mkdirFs(outputFolder, { recursive: true });
+        const outputPath = join(outputFolder, `${input.outputName}.mp4`);
+        const tempDir = join(THUMBNAIL_DIR, `temp_${operationId}`);
+        await mkdirFs(tempDir, { recursive: true });
+
+        // Process media files and create standardized intermediate video files
+        const mediaFiles = input.mediaPaths.map(p => expandPath(p));
+        const intermediateFiles = [];
+
+        for (let i = 0; i < mediaFiles.length; i++) {
+          const mediaFile = mediaFiles[i];
+          const ext = extname(mediaFile).toLowerCase();
+          const standardizedFile = join(tempDir, `media_${i}.mp4`);
+
+          if (SUPPORTED_IMAGE_FORMATS.includes(ext)) {
+            // Convert image to standardized video with duration
+            const duration = input.photoDuration || 1;
+            const ffmpegCmd = `ffmpeg -loop 1 -i "${mediaFile}" -c:v libx264 -c:a aac -t ${duration} -pix_fmt yuv420p -r 30 -y "${standardizedFile}"`;
+            execSync(ffmpegCmd, { stdio: 'ignore' });
+            intermediateFiles.push(standardizedFile);
+          } else if (SUPPORTED_VIDEO_FORMATS.includes(ext)) {
+            // Re-encode video to standardized format for compatibility
+            const ffmpegCmd = `ffmpeg -i "${mediaFile}" -c:v libx264 -c:a aac -pix_fmt yuv420p -r 30 -y "${standardizedFile}"`;
+            execSync(ffmpegCmd, { stdio: 'ignore' });
+            intermediateFiles.push(standardizedFile);
+          }
+        }
+
+        // Create concat demuxer file
+        const concatFile = join(tempDir, 'concat.txt');
+        const concatContent = intermediateFiles.map(fp => `file '${fp.replace(/'/g, "'\\''")}'`).join('\n');
+        await writeFileAsync(concatFile, concatContent);
+
+        // Build ffmpeg command to concatenate all standardized files
+        const bitrateMap = {
+          'auto-detect': '',
+          'high': '-b:v 5000k -b:a 192k',
+          'medium': '-b:v 2500k -b:a 128k',
+          'low': '-b:v 1000k -b:a 96k',
+        };
+        const bitrate = bitrateMap[input.quality] || '';
+        const ffmpegCmd = `ffmpeg -f concat -safe 0 -i "${concatFile}" -c:v libx264 ${bitrate} -c:a aac -y "${outputPath}"`;
+
+        execSync(ffmpegCmd, { stdio: 'inherit' });
+
+        // Cleanup temp files
+        execSync(`rm -rf "${tempDir}"`, { stdio: 'ignore' });
+
+        const duration = getVideoDuration(outputPath);
+        return {
+          id: operationId,
+          outputPath,
+          duration,
+          status: 'completed',
+        };
+      } catch (error) {
+        throw new Error(`Failed to combine media: ${error.message}`);
       }
     },
 

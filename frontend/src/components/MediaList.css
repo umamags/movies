@@ -1,0 +1,132 @@
+.media-list {
+  width: 100%;
+}
+
+.media-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.selected-media {
+  padding: 15px;
+  background: #e7f3ff;
+  border: 2px solid #007bff;
+  border-radius: 6px;
+}
+
+.selected-media h3 {
+  margin-bottom: 12px;
+  color: #0056b3;
+  font-size: 1rem;
+}
+
+.ordered-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.media-order-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: white;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  cursor: move;
+  transition: all 0.2s;
+}
+
+.media-order-item:hover {
+  background: #f9f9f9;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.media-order-item.dragging {
+  opacity: 0.5;
+  background: #f0f0f0;
+}
+
+.order-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #007bff;
+  color: white;
+  border-radius: 50%;
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.order-type {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.order-name {
+  flex: 1;
+  font-weight: 500;
+  color: #333;
+  word-break: break-word;
+}
+
+.order-duration {
+  background: #f0f0f0;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.remove-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: #dc3545;
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.remove-btn:hover {
+  background: #c82333;
+  box-shadow: 0 2px 6px rgba(220, 53, 69, 0.3);
+}
+
+.media-list h3 {
+  margin: 0 0 12px 0;
+  color: #333;
+  font-size: 1rem;
+}
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 15px;
+}
+
+@media (max-width: 768px) {
+  .media-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+
+  .media-order-item {
+    flex-wrap: wrap;
+  }
+
+  .order-name {
+    width: 100%;
+  }
+}
