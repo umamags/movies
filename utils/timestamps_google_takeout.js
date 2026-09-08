@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { chromium } = require('playwright');
 
 let ExifParser;
 try {
@@ -13,7 +14,82 @@ try {
 }
 
 const config = require('./config.json');
-const { getGeoLocationAddress } = require('./getGeoLocationAddress');
+
+// Get geo location address using Playwright headless browser
+async function getGeoLocationAddressBrowser(browser, latitude, longitude, geoCache) {
+  const accessToken = process.env.LOCATIONIQ_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    throw new Error('LOCATIONIQ_ACCESS_TOKEN environment variable is not set');
+  }
+
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+    throw new Error('Latitude and longitude must be numbers');
+  }
+
+  // Skip invalid coordinates (0,0)
+  if (latitude === 0 && longitude === 0) {
+    throw new Error('Invalid coordinates (0,0)');
+  }
+
+  // Check cache first
+  const cacheKey = `${latitude},${longitude}`;
+  if (geoCache && geoCache[cacheKey]) {
+    return geoCache[cacheKey];
+  }
+
+  const apiUrl = `https://us1.locationiq.com/v1/reverse?key=${accessToken}&lat=${latitude}&lon=${longitude}&format=json`;
+  let context;
+
+  try {
+    context = await browser.newContext();
+    const page = await context.newPage();
+
+    const response = await page.goto(apiUrl, { waitUntil: 'domcontentloaded' });
+
+    if (!response.ok()) {
+      console.error(`\n🔗 API Call: ${apiUrl.replace(accessToken, 'HIDDEN_TOKEN')}`);
+      throw new Error(`LocationIQ API returned status ${response.status()}`);
+    }
+
+    const data = await page.evaluate(() => document.body.innerText);
+
+    // Check if response is HTML (error page)
+    if (data.trim().startsWith('<') || data.includes('<!DOCTYPE')) {
+      console.error(`\n🔗 API Call: ${apiUrl.replace(accessToken, 'HIDDEN_TOKEN')}`);
+      throw new Error(`LocationIQ API returned HTML. Check your LOCATIONIQ_ACCESS_TOKEN.`);
+    }
+
+    let jsonResponse;
+    try {
+      jsonResponse = JSON.parse(data);
+    } catch (parseErr) {
+      console.error(`\n🔗 API Call: ${apiUrl.replace(accessToken, 'HIDDEN_TOKEN')}`);
+      throw new Error(`Failed to parse LocationIQ response as JSON: ${data.substring(0, 100)}`);
+    }
+
+    if (!jsonResponse.address) {
+      console.error(`\n🔗 API Call: ${apiUrl.replace(accessToken, 'HIDDEN_TOKEN')}`);
+      throw new Error('No address found in LocationIQ response');
+    }
+
+    const address = jsonResponse.address.name || '';
+    // Store in cache
+    if (geoCache) {
+      geoCache[cacheKey] = address;
+    }
+    return address;
+  } catch (err) {
+    if (!err.message.includes('API Call:')) {
+      console.error(`\n🔗 API Call: ${apiUrl.replace(accessToken, 'HIDDEN_TOKEN')}`);
+    }
+    throw err;
+  } finally {
+    if (context) {
+      await context.close();
+    }
+  }
+}
 
 // Check for command line arguments
 const args = process.argv.slice(2);
@@ -68,7 +144,7 @@ function getGoogleTakeoutCreationTime(filePath) {
 }
 
 // Add geo location address to metadata if geoData exists
-async function addGeoLocationAddressToMetadata(filePath) {
+async function addGeoLocationAddressToMetadata(filePath, browser, geoCache) {
   const metadataPath = `${filePath}.supplemental-metadata.json`;
 
   if (!fs.existsSync(metadataPath)) {
@@ -91,8 +167,8 @@ async function addGeoLocationAddressToMetadata(filePath) {
 
     const { latitude, longitude } = metadata.geoData;
 
-    // Get address from LocationIQ
-    const address = await getGeoLocationAddress(latitude, longitude);
+    // Get address from LocationIQ using browser
+    const address = await getGeoLocationAddressBrowser(browser, latitude, longitude, geoCache);
 
     // Add address to metadata
     metadata.geoData.geoDataAddress = address;
@@ -281,7 +357,7 @@ function hasTimestampPrefix(filename) {
 }
 
 // Process a single folder
-async function processFolder(folderConfig) {
+async function processFolder(folderConfig, browser, geoCache) {
   const folderPath = folderConfig.folder;
   const title = folderConfig.title;
 
@@ -298,6 +374,8 @@ async function processFolder(folderConfig) {
 
     let processedCount = 0;
     let skippedCount = 0;
+    let geoUpdatedCount = 0;
+    let geoErrorCount = 0;
     const results = [];
 
     for (const filename of files) {
@@ -305,27 +383,44 @@ async function processFolder(folderConfig) {
 
       // Skip supplemental-metadata.json files
       if (filename.endsWith('.supplemental-metadata.json')) {
-        return;
+        continue;
       }
 
       // Check if file is a supported format
       if (!supportedFormats.includes(fileExt)) {
-        return;
+        continue;
       }
 
       const filePath = path.join(folderPath, filename);
       const isImage = imageFormats.includes(fileExt);
 
       try {
-        // Add geo location address to metadata if geoData exists
-        const geoResult = await addGeoLocationAddressToMetadata(filePath);
-        if (!geoResult.success) {
-          results.push({
-            status: '❌ ERROR',
-            filename: filename,
-            error: `Failed to add geo address: ${geoResult.error}`,
-          });
-          continue;
+        // Add geo location address to metadata if geoData exists and getGeoLocation is enabled
+        let geoAddress = null;
+        if (folderConfig.getGeoLocation === 'yes') {
+          const geoResult = await addGeoLocationAddressToMetadata(filePath, browser, geoCache);
+          if (!geoResult || !geoResult.success) {
+            geoErrorCount++;
+            results.push({
+              status: '❌ ERROR',
+              filename: filename,
+              error: `Failed to add geo address: ${geoResult.error}`,
+            });
+            continue;
+          }
+          // Read back the geo address from metadata
+          const metadataPath = `${filePath}.supplemental-metadata.json`;
+          if (fs.existsSync(metadataPath)) {
+            try {
+              const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+              geoAddress = metadata.geoData?.geoDataAddress || null;
+              if (geoAddress) {
+                geoUpdatedCount++;
+              }
+            } catch (err) {
+              // Silently fail reading geo address
+            }
+          }
         }
         // In remove mode, strip existing timestamp prefix
         if (removeMode) {
@@ -372,7 +467,7 @@ async function processFolder(folderConfig) {
             });
             skippedCount++;
           }
-          return;
+          continue;
         }
 
         // Get creation time from metadata (Google Takeout or fallback)
@@ -418,6 +513,7 @@ async function processFolder(folderConfig) {
                 filename: filename,
                 newFilename: newFilename,
                 timestamp: timestamp,
+                geoAddress: geoAddress,
               });
               processedCount++;
             } catch (err) {
@@ -443,6 +539,7 @@ async function processFolder(folderConfig) {
             timestamp: timestamp,
             type: isImage ? '🖼️  Image' : '🎥 Video',
             hasPrefix: hasPrefix ? '(already timestamped)' : '',
+            geoAddress: geoAddress,
           });
           processedCount++;
         }
@@ -480,19 +577,30 @@ async function processFolder(folderConfig) {
         console.log(`         └─ Renamed to: ${result.newFilename}\n`);
       } else if (result.status === '✅ ADDED' || result.status === '🔄 UPDATED') {
         console.log(`${result.status} ${result.filename}`);
-        console.log(`         └─ Renamed to: ${result.newFilename}\n`);
+        console.log(`         └─ Renamed to: ${result.newFilename}`);
+        if (result.geoAddress) {
+          console.log(`         └─ Location: ${result.geoAddress}`);
+        }
+        console.log();
       } else {
         console.log(`${result.status} ${result.filename}`);
-        console.log(`         └─ Created: ${result.timestamp} (${result.type}) ${result.hasPrefix || ''}\n`);
+        console.log(`         └─ Created: ${result.timestamp} (${result.type}) ${result.hasPrefix || ''}`);
+        if (result.geoAddress) {
+          console.log(`         └─ Location: ${result.geoAddress}`);
+        }
+        console.log();
       }
     });
 
     // Summary
     console.log('='.repeat(80));
     console.log(`Summary: ${processedCount} processed, ${skippedCount} skipped, ${results.length} total`);
+    if (geoUpdatedCount > 0 || geoErrorCount > 0) {
+      console.log(`Geo Location: ${geoUpdatedCount} metadata updated, ${geoErrorCount} errors`);
+    }
     console.log('='.repeat(80) + '\n');
 
-    return { success: true, processedCount, skippedCount };
+    return { success: true, processedCount, skippedCount, geoUpdatedCount, geoErrorCount };
 
   } catch (err) {
     console.error(`❌ Error reading folder: ${err.message}`);
@@ -517,7 +625,8 @@ function showUsage() {
   console.log('Available folders:');
   config.folders.forEach((folder, index) => {
     const status = folder.run === 'yes' ? '✅' : '⏸️';
-    console.log(`  ${index + 1}. ${status} ${folder.title}`);
+    const geoStatus = folder.getGeoLocation === 'yes' ? '🌍' : '';
+    console.log(`  ${index + 1}. ${status} ${folder.title} ${geoStatus}`);
     console.log(`     Path: ${folder.folder}`);
   });
   console.log('\nMetadata extraction (in priority order):');
@@ -527,8 +636,9 @@ function showUsage() {
   console.log('  4. Videos: ffprobe creation_time from video metadata');
   console.log('  5. Fallback: File system creation time\n');
   console.log('Geo Location Address (requires LOCATIONIQ_ACCESS_TOKEN):');
-  console.log('  • If metadata file contains geoData with latitude/longitude,');
-  console.log('    the script will reverse-geocode it using LocationIQ API');
+  console.log('  • Controlled by "getGeoLocation" setting in config.json per folder');
+  console.log('  • If enabled and metadata file contains geoData with latitude/longitude,');
+  console.log('    the script will reverse-geocode it using LocationIQ API via headless browser');
   console.log('  • Adds "geoDataAddress" to the metadata JSON\n');
   console.log('Examples:');
   console.log('  node utils/timestamps_google_takeout.js                    # List timestamps, all enabled folders');
@@ -578,12 +688,31 @@ async function main() {
 
   let totalProcessed = 0;
   let totalSkipped = 0;
+  let totalGeoUpdated = 0;
+  let totalGeoErrors = 0;
+  let browser;
+  const geoCache = {}; // Cache for coordinate -> address mappings
 
-  for (const folderConfig of foldersToProcess) {
-    const result = await processFolder(folderConfig);
-    if (result.success) {
-      totalProcessed += result.processedCount;
-      totalSkipped += result.skippedCount;
+  try {
+    // Create browser instance only if any folder needs geo location
+    const needsBrowser = foldersToProcess.some(f => f.getGeoLocation === 'yes');
+    if (needsBrowser) {
+      browser = await chromium.launch();
+    }
+
+    for (const folderConfig of foldersToProcess) {
+      const result = await processFolder(folderConfig, browser, geoCache);
+      if (result.success) {
+        totalProcessed += result.processedCount;
+        totalSkipped += result.skippedCount;
+        totalGeoUpdated += result.geoUpdatedCount || 0;
+        totalGeoErrors += result.geoErrorCount || 0;
+      }
+    }
+  } finally {
+    // Close browser
+    if (browser) {
+      await browser.close();
     }
   }
 
@@ -591,6 +720,9 @@ async function main() {
   if (foldersToProcess.length > 1) {
     console.log('╔' + '═'.repeat(78) + '╗');
     console.log(`║ TOTAL: ${totalProcessed} processed, ${totalSkipped} skipped`.padEnd(79) + '║');
+    if (totalGeoUpdated > 0 || totalGeoErrors > 0) {
+      console.log(`║ METADATA: ${totalGeoUpdated} geo locations updated, ${totalGeoErrors} errors`.padEnd(79) + '║');
+    }
     console.log('╚' + '═'.repeat(78) + '╝\n');
   }
 
@@ -600,6 +732,14 @@ async function main() {
 
   if (removeMode && totalProcessed > 0) {
     console.log('✅ Timestamp prefixes have been successfully removed from filenames!\n');
+  }
+
+  if (totalGeoUpdated > 0) {
+    console.log(`✅ Metadata updated: ${totalGeoUpdated} files with geo location addresses\n`);
+  }
+
+  if (totalGeoErrors > 0) {
+    console.log(`⚠️  ${totalGeoErrors} files had errors retrieving geo location data\n`);
   }
 }
 
