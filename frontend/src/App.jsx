@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import CombineVideos from './components/CombineVideos';
 import CombineMedia from './components/CombineMedia';
+import SplitVideo from './components/SplitVideo';
 import './App.css';
 
 export default function App() {
@@ -41,7 +42,6 @@ export default function App() {
           <button
             className={`tab ${activeTab === 'split' ? 'active' : ''}`}
             onClick={() => setActiveTab('split')}
-            disabled
           >
             Split Videos
           </button>
@@ -75,7 +75,9 @@ export default function App() {
           {activeTab === 'combineMedia' && (
             <CombineMedia settings={settings} setSettings={setSettings} />
           )}
-          {activeTab === 'split' && <div>Split Videos Coming Soon</div>}
+          {activeTab === 'split' && (
+            <SplitVideo settings={settings} setSettings={setSettings} />
+          )}
           {activeTab === 'extractAudio' && <div>Extract Audio Coming Soon</div>}
           {activeTab === 'deleteAudio' && <div>Delete Audio Coming Soon</div>}
           {activeTab === 'create' && <div>Create Movie Coming Soon</div>}

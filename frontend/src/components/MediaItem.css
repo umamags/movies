@@ -164,3 +164,15 @@
   color: #999;
   text-transform: uppercase;
 }
+
+.media-location {
+  margin: 0;
+  font-size: 12px;
+  color: #0066cc;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-top: 4px;
+  border-top: 1px solid #f0f0f0;
+}

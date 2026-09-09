@@ -14,12 +14,22 @@ export default function CombineMedia({ settings, setSettings }) {
   const [outputName, setOutputName] = useState(settings.lastOutputName || 'media_video');
   const [quality, setQuality] = useState(settings.outputQuality || 'auto-detect');
   const [photoDuration, setPhotoDuration] = useState(1);
+  const [chunkSize, setChunkSize] = useState(settings.chunkSize || '500MB');
   const [loading, setLoading] = useState(false);
   const [combining, setCombining] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
+  const [availableDates, setAvailableDates] = useState([]);
+  const [includeLocation, setIncludeLocation] = useState(false);
+  const [mediaLocations, setMediaLocations] = useState({});
+
+  const extractDateFromFilename = (filename) => {
+    const match = filename.match(/^(\d{8})/);
+    return match ? match[1] : null;
+  };
 
   const fetchMedia = async (folderPath) => {
     setLoading(true);
@@ -56,6 +66,25 @@ export default function CombineMedia({ settings, setSettings }) {
       const mediaData = data.data.listMedia || [];
       setMedia(mediaData);
       setSelectedMedia([]);
+      setSelectedDate('');
+
+      // Extract unique dates from filenames
+      const dates = new Set();
+      mediaData.forEach(m => {
+        const date = extractDateFromFilename(m.filename);
+        if (date) {
+          dates.add(date);
+        }
+      });
+
+      // Only show date filter if all files have dates
+      if (dates.size > 0 && dates.size === new Set(mediaData.map(m => extractDateFromFilename(m.filename)).filter(Boolean)).size / mediaData.length * mediaData.length) {
+        const sortedDates = Array.from(dates).sort().reverse();
+        setAvailableDates(sortedDates);
+      } else if (dates.size > 0) {
+        const sortedDates = Array.from(dates).sort().reverse();
+        setAvailableDates(sortedDates);
+      }
     } catch (err) {
       setError(`Error fetching media: ${err.message}`);
       setMedia([]);
@@ -73,6 +102,76 @@ export default function CombineMedia({ settings, setSettings }) {
     setSelectedMedia(prev =>
       prev.includes(mediaId) ? prev.filter(id => id !== mediaId) : [...prev, mediaId]
     );
+  };
+
+  const handleSelectAll = () => {
+    const filteredMedia = selectedDate
+      ? media.filter(m => extractDateFromFilename(m.filename) === selectedDate)
+      : media;
+    const allIds = filteredMedia.map(m => m.id);
+    setSelectedMedia(allIds);
+  };
+
+  const handleClearSelection = () => {
+    setSelectedMedia([]);
+  };
+
+  const getFilteredMedia = () => {
+    return selectedDate
+      ? media.filter(m => extractDateFromFilename(m.filename) === selectedDate)
+      : media;
+  };
+
+  const fetchLocationForMedia = async (mediaItem) => {
+    if (!includeLocation || !mediaItem.path) return null;
+
+    const cacheKey = mediaItem.id;
+    if (mediaLocations[cacheKey]) {
+      return mediaLocations[cacheKey];
+    }
+
+    try {
+      const query = `
+        query GetMediaLocation($mediaPath: String!) {
+          getMediaLocation(mediaPath: $mediaPath)
+        }
+      `;
+
+      const response = await fetch(`${BACKEND_URL}/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          variables: { mediaPath: mediaItem.path }
+        }),
+      });
+
+      const data = await response.json();
+      const location = data.data?.getMediaLocation || null;
+
+      if (location) {
+        setMediaLocations(prev => ({
+          ...prev,
+          [cacheKey]: location
+        }));
+      }
+
+      return location;
+    } catch (err) {
+      console.error('Failed to fetch location:', err);
+      return null;
+    }
+  };
+
+  const handleIncludeLocationChange = async (checked) => {
+    setIncludeLocation(checked);
+    if (checked) {
+      // Fetch locations for all filtered media
+      const filteredMedia = getFilteredMedia();
+      for (const item of filteredMedia) {
+        await fetchLocationForMedia(item);
+      }
+    }
   };
 
   const reorderMedia = (draggedId, targetId) => {
@@ -110,13 +209,14 @@ export default function CombineMedia({ settings, setSettings }) {
         .filter(Boolean);
 
       const mutation = `
-        mutation CombineMedia($inputFolder: String!, $mediaPaths: [String!]!, $outputName: String!, $quality: String!, $photoDuration: Float!) {
+        mutation CombineMedia($inputFolder: String!, $mediaPaths: [String!]!, $outputName: String!, $quality: String!, $photoDuration: Float!, $chunkSize: String!) {
           combineMedia(input: {
             inputFolder: $inputFolder
             mediaPaths: $mediaPaths
             outputName: $outputName
             quality: $quality
             photoDuration: $photoDuration
+            chunkSize: $chunkSize
           }) {
             id
             outputPath
@@ -136,7 +236,8 @@ export default function CombineMedia({ settings, setSettings }) {
             mediaPaths: selectedPaths,
             outputName,
             quality,
-            photoDuration: parseFloat(photoDuration)
+            photoDuration: parseFloat(photoDuration),
+            chunkSize
           }
         }),
       });
@@ -192,14 +293,67 @@ export default function CombineMedia({ settings, setSettings }) {
         <>
           <div className="section">
             <h2>Step 2: Select Media Files</h2>
+
+            {availableDates.length > 0 && (
+              <div className="filter-section">
+                <div className="filter-row">
+                  <div className="filter-group">
+                    <label>Filter by Date:</label>
+                    <select
+                      value={selectedDate}
+                      onChange={e => setSelectedDate(e.target.value)}
+                      disabled={combining}
+                      className="date-filter"
+                    >
+                      <option value="">All Dates</option>
+                      {availableDates.map(date => (
+                        <option key={date} value={date}>
+                          {date.substring(0, 4)}-{date.substring(4, 6)}-{date.substring(6, 8)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="filter-group checkbox-group">
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={includeLocation}
+                        onChange={e => handleIncludeLocationChange(e.target.checked)}
+                        disabled={combining}
+                      />
+                      <span>📍 Include Location</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="section-controls">
+              <button
+                className="btn btn-secondary"
+                onClick={handleSelectAll}
+                disabled={combining || (selectedDate ? getFilteredMedia().length === 0 : media.length === 0)}
+              >
+                ✓ Select All
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={handleClearSelection}
+                disabled={combining || selectedMedia.length === 0}
+              >
+                ✕ Clear Selection
+              </button>
+            </div>
+
             <p className="section-hint">
-              {media.length} file(s) available, {selectedMedia.length} file(s) selected
+              {getFilteredMedia().length} file(s) available, {selectedMedia.length} file(s) selected
             </p>
             <MediaList
-              media={media}
+              media={getFilteredMedia()}
               selectedMedia={selectedMedia}
               onToggleSelection={toggleMediaSelection}
               onReorder={reorderMedia}
+              mediaLocations={mediaLocations}
             />
           </div>
 
@@ -238,6 +392,25 @@ export default function CombineMedia({ settings, setSettings }) {
                 onQualityChange={setQuality}
                 disabled={combining}
               />
+            </div>
+
+            <div className="form-group">
+              <label>Video Chunk Size (for large files):</label>
+              <select
+                value={chunkSize}
+                onChange={e => {
+                  setChunkSize(e.target.value);
+                  setSettings({ ...settings, chunkSize: e.target.value });
+                }}
+                disabled={combining}
+                className="form-select"
+              >
+                <option value="100MB">100 MB</option>
+                <option value="200MB">200 MB</option>
+                <option value="500MB">500 MB (recommended)</option>
+                <option value="1GB">1 GB</option>
+              </select>
+              <small>Splits large videos into chunks to avoid file size issues</small>
             </div>
           </div>
 

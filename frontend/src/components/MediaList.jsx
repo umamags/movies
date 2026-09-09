@@ -8,6 +8,7 @@ export default function MediaList({
   selectedMedia,
   onToggleSelection,
   onReorder,
+  mediaLocations = {},
 }) {
   const [draggedId, setDraggedId] = useState(null);
   const [previewMedia, setPreviewMedia] = useState(null);
@@ -83,6 +84,7 @@ export default function MediaList({
                 isSelected={selectedMedia.includes(m.id)}
                 onToggle={() => onToggleSelection(m.id)}
                 onPreview={() => setPreviewMedia(m)}
+                location={mediaLocations[m.id]}
               />
             ))}
           </div>

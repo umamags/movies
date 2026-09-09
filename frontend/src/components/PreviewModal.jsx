@@ -1,7 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import './PreviewModal.css';
 
 export default function PreviewModal({ media, onClose }) {
+  const [loadError, setLoadError] = useState(false);
+
   useEffect(() => {
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
@@ -17,19 +19,61 @@ export default function PreviewModal({ media, onClose }) {
   const isImage = media.type === 'image';
   const isVideo = media.type === 'video';
 
+  const handleOpenInNewWindow = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (media.path) {
+      // Convert local path to file:// URL for direct file opening
+      let fileUrl = media.path;
+
+      // If it's a local file path, convert to file:// URL
+      if (!fileUrl.startsWith('http') && !fileUrl.startsWith('file://')) {
+        // On Windows, paths like C:\Users\... need special handling
+        // On Mac/Linux, paths like /Users/... need file:// prefix
+        if (fileUrl.startsWith('/')) {
+          fileUrl = 'file://' + fileUrl;
+        } else if (fileUrl.match(/^[A-Z]:/)) {
+          // Windows path like C:\Users\...
+          fileUrl = 'file:///' + fileUrl.replace(/\\/g, '/');
+        }
+      }
+
+      // Open the file in a new window
+      window.open(fileUrl, '_blank');
+    }
+  };
+
+  const handleLoadError = () => {
+    setLoadError(true);
+  };
+
   return (
     <div className="preview-modal-overlay" onClick={onClose}>
       <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
-        <button className="preview-close" onClick={onClose} title="Close (Esc)">
-          ✕
-        </button>
+        <div className="preview-header">
+          <button className="preview-close" onClick={onClose} title="Close (Esc)">
+            ✕
+          </button>
+          <button className="preview-open-new" onClick={handleOpenInNewWindow} title="Open in new window">
+            ⇗
+          </button>
+        </div>
 
         <div className="preview-content">
-          {isImage ? (
+          {loadError ? (
+            <div className="preview-error">
+              <p>Preview not available</p>
+              <button className="btn btn-secondary" onClick={handleOpenInNewWindow}>
+                Open in New Window
+              </button>
+            </div>
+          ) : isImage ? (
             <img
               src={media.path}
               alt={media.filename}
               className="preview-image"
+              onError={handleLoadError}
             />
           ) : isVideo ? (
             <video
@@ -37,6 +81,7 @@ export default function PreviewModal({ media, onClose }) {
               controls
               autoPlay
               className="preview-video"
+              onError={handleLoadError}
             />
           ) : null}
         </div>

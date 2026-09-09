@@ -3,7 +3,7 @@ import './MediaItem.css';
 
 const BACKEND_URL = 'http://localhost:4000';
 
-export default function MediaItem({ media, isSelected, onToggle, onPreview }) {
+export default function MediaItem({ media, isSelected, onToggle, onPreview, location }) {
   const [thumbnail, setThumbnail] = useState(null);
   const [error, setError] = useState(false);
 
@@ -91,6 +91,7 @@ export default function MediaItem({ media, isSelected, onToggle, onPreview }) {
         <h4 title={media.filename}>{media.filename}</h4>
         <p className="media-size">{formatFileSize(media.size)}</p>
         <p className="media-format">{media.format.toUpperCase()}</p>
+        {location && <p className="media-location">📍 {location}</p>}
       </div>
     </div>
   );
