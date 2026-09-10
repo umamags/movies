@@ -18,43 +18,45 @@ export default function MapModal({ isOpen, onClose, latitude, longitude, address
   useEffect(() => {
     if (!isOpen || !mapContainer.current) return;
 
-    // Initialize map only once
-    if (!mapInstance.current) {
-      mapInstance.current = L.map(mapContainer.current).setView(
-        [latitude, longitude],
-        13
-      );
-
-      // Add OpenStreetMap tiles
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 19,
-      }).addTo(mapInstance.current);
+    // Destroy existing map
+    if (mapInstance.current) {
+      mapInstance.current.remove();
+      mapInstance.current = null;
     }
 
-    // Update map view and marker
-    mapInstance.current.setView([latitude, longitude], 13);
+    // Create new map
+    mapInstance.current = L.map(mapContainer.current).setView(
+      [latitude, longitude],
+      13
+    );
 
-    // Remove existing markers
-    mapInstance.current.eachLayer((layer) => {
-      if (layer instanceof L.Marker) {
-        mapInstance.current.removeLayer(layer);
-      }
-    });
+    // Add OpenStreetMap tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+    }).addTo(mapInstance.current);
 
-    // Add marker
+    // Add marker with popup
     L.marker([latitude, longitude])
       .bindPopup(address || 'Location')
       .addTo(mapInstance.current)
       .openPopup();
 
-    // Trigger resize to properly render the map
+    // Trigger resize
     setTimeout(() => {
       if (mapInstance.current) {
         mapInstance.current.invalidateSize();
       }
     }, 100);
+
+    // Cleanup on unmount
+    return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+      }
+    };
   }, [isOpen, latitude, longitude, address]);
 
   if (!isOpen) return null;

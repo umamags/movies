@@ -10,6 +10,7 @@ import { dirname } from 'path';
 import os from 'os';
 import { readFile } from 'fs/promises';
 import heicConvert from 'heic-convert';
+import { exiftool } from 'exiftool-vendored';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -245,6 +246,11 @@ const typeDefs = `
     results: [GeoLocationResult!]
   }
 
+  type AddLabelResult {
+    success: Boolean!
+    message: String!
+  }
+
   type Mutation {
     combineVideos(input: CombineInput!): CombineResult!
     combineMedia(input: CombineMediaInput!): CombineResult!
@@ -257,6 +263,7 @@ const typeDefs = `
     downloadMultipleYoutube(urls: [String!]!): YoutubeDownloadMultipleResult!
     processTimestamps(input: ProcessTimestampsInput!): TimestampsResult!
     getGeoLocations(photos: [PhotoLocationInput!]!): GetGeoLocationsResult!
+    addLabelToPhoto(filePath: String!, label: String!): AddLabelResult!
   }
 
   type Subscription {
@@ -709,6 +716,18 @@ const resolvers = {
           success: false,
           message: error.message,
           results: [],
+        };
+      }
+    },
+
+    addLabelToPhoto: async (_, { filePath, label }) => {
+      try {
+        const result = await addLabelToPhotoFile(filePath, label);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
         };
       }
     },
@@ -1552,6 +1571,91 @@ async function getGeoLocationAddresses(photos) {
     message: `Fetched addresses for ${results.length} photo(s)`,
     results,
   };
+}
+
+async function addLabelToPhotoFile(filePath, label) {
+  try {
+    const expandedPath = filePath.startsWith('~')
+      ? filePath.replace('~', os.homedir())
+      : filePath;
+
+    if (!fs.existsSync(expandedPath)) {
+      throw new Error('File not found');
+    }
+
+    const fileExt = extname(expandedPath).toLowerCase();
+    const isHeic = fileExt === '.heic' || fileExt === '.heif';
+
+    // Create backup
+    const backupPath = `${expandedPath}.bkup`;
+    if (!fs.existsSync(backupPath)) {
+      fs.copyFileSync(expandedPath, backupPath);
+      console.log(`[Label] Backup created: ${backupPath}`);
+    }
+
+    // Add text overlay using ImageMagick
+    console.log(`[Label] Adding label to: ${expandedPath}`);
+    const escapedLabel = label.replace(/"/g, '\\"');
+
+    if (isHeic) {
+      // Convert HEIC to temp JPEG, add text, then convert back
+      const tempJpg = join(THUMBNAIL_DIR, `temp_${Date.now()}.jpg`);
+      const tempLabeledJpg = join(THUMBNAIL_DIR, `temp_labeled_${Date.now()}.jpg`);
+
+      try {
+        // Convert HEIC to JPEG
+        execSync(`ffmpeg -i "${expandedPath}" "${tempJpg}" -y 2>/dev/null`, {
+          stdio: 'pipe',
+        });
+
+        // Add text overlay to JPEG
+        execSync(
+          `convert "${tempJpg}" -gravity south -background white -splice 0x30 -gravity south -annotate 0x0 "${escapedLabel}" -trim +repage "${tempLabeledJpg}"`,
+          { stdio: 'pipe' }
+        );
+
+        // Convert back to HEIC
+        execSync(`ffmpeg -i "${tempLabeledJpg}" "${expandedPath}" -y 2>/dev/null`, {
+          stdio: 'pipe',
+        });
+
+        // Clean up temp files
+        fs.unlinkSync(tempJpg);
+        fs.unlinkSync(tempLabeledJpg);
+      } catch (err) {
+        // Clean up temp files on error
+        if (fs.existsSync(tempJpg)) fs.unlinkSync(tempJpg);
+        if (fs.existsSync(tempLabeledJpg)) fs.unlinkSync(tempLabeledJpg);
+        throw err;
+      }
+    } else {
+      // Add text directly to JPEG/PNG
+      execSync(
+        `convert "${expandedPath}" -gravity south -background white -splice 0x30 -gravity south -annotate 0x0 "${escapedLabel}" -trim +repage "${expandedPath}"`,
+        { stdio: 'pipe' }
+      );
+    }
+
+    // Add metadata using ExifTool
+    try {
+      await exiftool.write(expandedPath, {
+        'XMP-dc:Description': label,
+      });
+      console.log(`[Label] Metadata updated for: ${expandedPath}`);
+    } catch (exifErr) {
+      console.warn(`[Label] Failed to update metadata: ${exifErr.message}`);
+      // Don't fail the whole operation if metadata update fails
+    }
+
+    console.log(`[Label] Successfully added label to: ${expandedPath}`);
+    return {
+      success: true,
+      message: 'Label added successfully',
+    };
+  } catch (error) {
+    console.error(`[Label] Error adding label: ${error.message}`);
+    throw error;
+  }
 }
 
 // Server setup

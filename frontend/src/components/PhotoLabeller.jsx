@@ -21,6 +21,11 @@ export default function PhotoLabeller() {
     longitude: null,
     address: '',
   });
+  const [labelEditing, setLabelEditing] = useState({
+    photoIndex: null,
+    text: '',
+    isUpdating: false,
+  });
 
   const handleFolderSelect = (folder) => {
     setFolderPath(folder.path || folder.name);
@@ -40,6 +45,66 @@ export default function PhotoLabeller() {
 
   const handleCloseMap = () => {
     setMapModal({ ...mapModal, isOpen: false });
+  };
+
+  const handleEditLabel = (photoIndex, currentAddress) => {
+    setLabelEditing({
+      photoIndex,
+      text: currentAddress || '',
+      isUpdating: false,
+    });
+  };
+
+  const handleUpdateLabel = async () => {
+    if (labelEditing.photoIndex === null) return;
+
+    const photo = photos[labelEditing.photoIndex];
+    setLabelEditing({ ...labelEditing, isUpdating: true });
+    setError('');
+
+    try {
+      const mutation = `
+        mutation AddLabelToPhoto($filePath: String!, $label: String!) {
+          addLabelToPhoto(filePath: $filePath, label: $label) {
+            success
+            message
+          }
+        }
+      `;
+
+      const response = await fetch(`${BACKEND_URL}/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: mutation,
+          variables: {
+            filePath: photo.path,
+            label: labelEditing.text,
+          }
+        }),
+      });
+
+      const data = await response.json();
+      if (data.errors) {
+        throw new Error(data.errors[0].message);
+      }
+
+      const result = data.data.addLabelToPhoto;
+      if (result.success) {
+        // Update photo with label in UI
+        const updatedPhotos = [...photos];
+        updatedPhotos[labelEditing.photoIndex].label = labelEditing.text;
+        setPhotos(updatedPhotos);
+        setSuccess('Label added to photo');
+        setLabelEditing({ photoIndex: null, text: '', isUpdating: false });
+      } else {
+        setError(`Failed: ${result.message}`);
+      }
+    } catch (err) {
+      setError(`Error updating label: ${err.message}`);
+    } finally {
+      setLabelEditing({ ...labelEditing, isUpdating: false });
+    }
   };
 
   const handleListPhotos = async () => {
@@ -294,18 +359,61 @@ export default function PhotoLabeller() {
                     </div>
                     <div className="photo-info">
                       <div className="photo-filename">{photo.filename}</div>
-                      <div className="photo-coords">
+                      <button
+                        className="photo-coords-link"
+                        onClick={() => handleAddressClick(photo.latitude, photo.longitude, photo.address)}
+                        title="Click to view map"
+                      >
                         📍 {photo.latitude.toFixed(4)}, {photo.longitude.toFixed(4)}
-                      </div>
-                      {photo.address ? (
-                        <button
-                          className="photo-address-link"
-                          onClick={() => handleAddressClick(photo.latitude, photo.longitude, photo.address)}
-                          title="Click to view map"
-                        >
-                          <strong>🏠</strong> {photo.address}
-                        </button>
+                      </button>
+                      {photo.address && (
+                        <div className="photo-address">
+                          🏠 {photo.address}
+                        </div>
+                      )}
+                      {labelEditing.photoIndex === idx ? (
+                        <div className="label-editing">
+                          <input
+                            type="text"
+                            className="label-input"
+                            value={labelEditing.text}
+                            onChange={(e) =>
+                              setLabelEditing({ ...labelEditing, text: e.target.value })
+                            }
+                            placeholder="Add label..."
+                          />
+                          <div className="label-buttons">
+                            <button
+                              className="btn btn-sm btn-primary"
+                              onClick={handleUpdateLabel}
+                              disabled={labelEditing.isUpdating || !labelEditing.text.trim()}
+                            >
+                              {labelEditing.isUpdating ? 'Updating...' : '✓ Update'}
+                            </button>
+                            <button
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => setLabelEditing({ photoIndex: null, text: '', isUpdating: false })}
+                              disabled={labelEditing.isUpdating}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
                       ) : (
+                        <button
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => handleEditLabel(idx, photo.address)}
+                          disabled={fetching}
+                        >
+                          {photo.label ? '✏️ Edit Label' : '+ Add Label'}
+                        </button>
+                      )}
+                      {photo.label && labelEditing.photoIndex !== idx && (
+                        <div className="photo-label">
+                          {photo.label}
+                        </div>
+                      )}
+                      {!photo.address && (
                         <button
                           className="btn btn-sm btn-secondary"
                           onClick={() => handleGetAddress(idx)}

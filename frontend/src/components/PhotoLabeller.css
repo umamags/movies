@@ -103,6 +103,22 @@
   font-family: monospace;
 }
 
+.photo-coords-link {
+  font-size: 12px;
+  color: #0066cc;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: monospace;
+  text-decoration: underline;
+  transition: color 0.2s;
+}
+
+.photo-coords-link:hover {
+  color: #0052a3;
+}
+
 .photo-address {
   font-size: 12px;
   color: #155724;
@@ -113,31 +129,50 @@
   line-height: 1.4;
 }
 
-.photo-address-link {
+.label-editing {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.label-input {
   font-size: 12px;
-  color: #155724;
-  background: #d4edda;
-  padding: 8px;
+  padding: 6px;
+  border: 1px solid #ddd;
   border-radius: 4px;
-  word-break: break-word;
-  line-height: 1.4;
-  border: none;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
   font-family: inherit;
-  font-weight: inherit;
-  transition: all 0.2s;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.photo-address-link:hover {
-  background: #c3e6cb;
-  box-shadow: 0 2px 6px rgba(21, 87, 36, 0.2);
-  transform: translateY(-1px);
+.label-input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 3px rgba(0, 123, 255, 0.3);
 }
 
-.photo-address-link strong {
-  margin-right: 4px;
+.label-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.label-buttons .btn {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.photo-label {
+  font-size: 11px;
+  color: #333;
+  background: #fff9e6;
+  padding: 6px;
+  border-radius: 3px;
+  border-left: 3px solid #ffc107;
+  word-break: break-word;
+  line-height: 1.3;
+  margin-top: 4px;
 }
 
 .alert {
