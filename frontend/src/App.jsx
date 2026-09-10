@@ -8,6 +8,7 @@ import DeleteAudio from './components/DeleteAudio';
 import YoutubeDownloader from './components/YoutubeDownloader';
 import YoutubePlaylistDownloader from './components/YoutubePlaylistDownloader';
 import Timestamps from './components/Timestamps';
+import PhotoLabeller from './components/PhotoLabeller';
 import './App.css';
 
 export default function App() {
@@ -38,6 +39,12 @@ export default function App() {
             onClick={() => setActiveTab('timestamps')}
           >
             Timestamps
+          </button>
+          <button
+            className={`tab ${activeTab === 'photoLabeller' ? 'active' : ''}`}
+            onClick={() => setActiveTab('photoLabeller')}
+          >
+            Photo Labeller
           </button>
           <button
             className={`tab ${activeTab === 'combine' ? 'active' : ''}`}
@@ -98,6 +105,7 @@ export default function App() {
 
         <div className="tab-content">
           {activeTab === 'timestamps' && <Timestamps />}
+          {activeTab === 'photoLabeller' && <PhotoLabeller />}
           {activeTab === 'combine' && (
             <CombineVideos settings={settings} setSettings={setSettings} />
           )}

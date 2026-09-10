@@ -1,13 +1,15 @@
 import express from 'express';
 import { ApolloServer } from 'apollo-server-express';
+import fs from 'fs';
 import { readdir, stat, writeFile, mkdir as mkdirFs } from 'fs/promises';
 import { execSync, spawn } from 'child_process';
-import { extname, join, resolve } from 'path';
+import { extname, join, resolve, normalize } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import os from 'os';
 import { readFile } from 'fs/promises';
+import heicConvert from 'heic-convert';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -80,6 +82,8 @@ const typeDefs = `
     getMediaLocation(mediaPath: String!): String
     getVideoDuration(filePath: String!): Float
     fetchChannelVideos(channelUrl: String!, pageToken: String, searchQuery: String): YoutubeChannelVideosResult!
+    listFilesInFolder(folderPath: String!): FileListResult!
+    listImagesInFolder(folderPath: String!): ImagesListResult!
   }
 
   type SplitResult {
@@ -138,6 +142,33 @@ const typeDefs = `
     failedVideos: [String!]
   }
 
+  type FileInfo {
+    name: String!
+    timestamp: String
+    hasTimestampPrefix: Boolean!
+  }
+
+  type FileListResult {
+    success: Boolean!
+    message: String!
+    files: [FileInfo!]
+  }
+
+  type TimestampResult {
+    originalFile: String!
+    newFile: String!
+    status: String!
+    error: String
+  }
+
+  type TimestampsResult {
+    success: Boolean!
+    message: String!
+    processedCount: Int!
+    failedCount: Int!
+    results: [TimestampResult!]
+  }
+
   input SplitVideoInput {
     filePath: String!
     mode: String!
@@ -172,6 +203,48 @@ const typeDefs = `
     chunkSize: String
   }
 
+  input FilePairInput {
+    original: String!
+    new: String!
+  }
+
+  input ProcessTimestampsInput {
+    folderPath: String!
+    mode: String!
+    filePairs: [FilePairInput!]!
+  }
+
+  type PhotoInfo {
+    filename: String!
+    path: String!
+    latitude: Float
+    longitude: Float
+    address: String
+  }
+
+  type ImagesListResult {
+    success: Boolean!
+    message: String!
+    photos: [PhotoInfo!]
+  }
+
+  input PhotoLocationInput {
+    filename: String!
+    latitude: Float!
+    longitude: Float!
+  }
+
+  type GeoLocationResult {
+    filename: String!
+    address: String!
+  }
+
+  type GetGeoLocationsResult {
+    success: Boolean!
+    message: String!
+    results: [GeoLocationResult!]
+  }
+
   type Mutation {
     combineVideos(input: CombineInput!): CombineResult!
     combineMedia(input: CombineMediaInput!): CombineResult!
@@ -182,6 +255,8 @@ const typeDefs = `
     editVideo(input: EditVideoInput!): EditVideoResult!
     downloadYoutube(url: String!): YoutubeDownloadResult!
     downloadMultipleYoutube(urls: [String!]!): YoutubeDownloadMultipleResult!
+    processTimestamps(input: ProcessTimestampsInput!): TimestampsResult!
+    getGeoLocations(photos: [PhotoLocationInput!]!): GetGeoLocationsResult!
   }
 
   type Subscription {
@@ -322,6 +397,44 @@ const resolvers = {
           videos: [],
           nextPageToken: null,
           totalCount: 0,
+        };
+      }
+    },
+
+    listFilesInFolder: async (_, { folderPath }) => {
+      try {
+        const expandedPath = expandPath(folderPath);
+        const files = await listFilesInFolder(expandedPath);
+        return {
+          success: true,
+          message: 'Files listed successfully',
+          files,
+        };
+      } catch (error) {
+        console.error('Error listing files:', error.message);
+        return {
+          success: false,
+          message: error.message,
+          files: [],
+        };
+      }
+    },
+
+    listImagesInFolder: async (_, { folderPath }) => {
+      try {
+        const expandedPath = expandPath(folderPath);
+        const photos = await listImagesInFolder(expandedPath);
+        return {
+          success: true,
+          message: 'Images listed successfully',
+          photos,
+        };
+      } catch (error) {
+        console.error('Error listing images:', error.message);
+        return {
+          success: false,
+          message: error.message,
+          photos: [],
         };
       }
     },
@@ -567,6 +680,35 @@ const resolvers = {
           failedCount: urls.length,
           downloadedVideos: [],
           failedVideos: urls,
+        };
+      }
+    },
+
+    processTimestamps: async (_, { input }) => {
+      try {
+        const expandedPath = expandPath(input.folderPath);
+        const result = await processTimestamps(expandedPath, input.mode, input.filePairs);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          processedCount: 0,
+          failedCount: input.filePairs.length,
+          results: [],
+        };
+      }
+    },
+
+    getGeoLocations: async (_, { photos }) => {
+      try {
+        const result = await getGeoLocationAddresses(photos);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          results: [],
         };
       }
     },
@@ -1094,6 +1236,324 @@ async function editVideoFile(filePath, deletionRanges) {
   }
 }
 
+function formatTimestamp(dateMs) {
+  const date = new Date(dateMs);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
+function getGoogleTakeoutCreationTime(filePath) {
+  // First, try to get metadata for the file itself
+  let metadataPath = `${filePath}.supplemental-metadata.json`;
+
+  if (!fs.existsSync(metadataPath)) {
+    // If not found, try to find metadata for a related file with the same base name
+    const fileDir = filePath.substring(0, filePath.lastIndexOf('/'));
+    const fileNameFull = filePath.substring(filePath.lastIndexOf('/') + 1);
+    const fileNameWithoutExt = fileNameFull.substring(0, fileNameFull.lastIndexOf('.'));
+
+    // Search for any metadata file matching the base filename
+    try {
+      const files = fs.readdirSync(fileDir);
+      const relatedMetadata = files.find(f =>
+        f.startsWith(fileNameWithoutExt) && f.endsWith('.supplemental-metadata.json')
+      );
+
+      if (relatedMetadata) {
+        metadataPath = join(fileDir, relatedMetadata);
+      } else {
+        return null;
+      }
+    } catch (err) {
+      return null;
+    }
+  }
+
+  if (!fs.existsSync(metadataPath)) {
+    return null;
+  }
+
+  try {
+    const metadataContent = fs.readFileSync(metadataPath, 'utf-8');
+    const metadata = JSON.parse(metadataContent);
+    if (metadata.photoTakenTime && metadata.photoTakenTime.timestamp) {
+      const timestamp = metadata.photoTakenTime.timestamp;
+      const dateMs = typeof timestamp === 'string' ? parseInt(timestamp) * 1000 : timestamp * 1000;
+      if (!isNaN(dateMs) && dateMs > 0) {
+        return dateMs;
+      }
+    }
+  } catch (err) {
+    // Metadata file exists but couldn't be parsed
+  }
+  return null;
+}
+
+function hasTimestampPrefix(filename) {
+  const pattern = /^\d{8}_\d{6}_/;
+  return pattern.test(filename);
+}
+
+async function listFilesInFolder(folderPath) {
+  try {
+    const supportedFormats = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.mp4', '.mov', '.avi', '.mkv', '.webm'];
+    const files = fs.readdirSync(folderPath);
+    const fileInfos = [];
+
+    for (const filename of files) {
+      // Skip metadata files and hidden files
+      if (filename.endsWith('.supplemental-metadata.json') || filename.startsWith('.')) {
+        continue;
+      }
+
+      const ext = extname(filename).toLowerCase();
+      if (!supportedFormats.includes(ext)) {
+        continue;
+      }
+
+      const filePath = join(folderPath, filename);
+      const googleTakeoutTime = getGoogleTakeoutCreationTime(filePath);
+
+      let timestamp = 'N/A';
+      if (googleTakeoutTime !== null) {
+        timestamp = formatTimestamp(googleTakeoutTime);
+      }
+
+      fileInfos.push({
+        name: filename,
+        timestamp: timestamp === 'N/A' ? null : timestamp,
+        hasTimestampPrefix: hasTimestampPrefix(filename),
+      });
+    }
+
+    return fileInfos;
+  } catch (error) {
+    throw new Error(`Failed to list files: ${error.message}`);
+  }
+}
+
+async function processTimestamps(folderPath, mode, filePairs) {
+  const results = [];
+  let processedCount = 0;
+  let failedCount = 0;
+
+  for (const pair of filePairs) {
+    try {
+      const oldPath = join(folderPath, pair.original);
+      const newPath = join(folderPath, pair.new);
+
+      // Check if file exists
+      if (!fs.existsSync(oldPath)) {
+        results.push({
+          originalFile: pair.original,
+          newFile: pair.new,
+          status: 'error',
+          error: 'File not found',
+        });
+        failedCount++;
+        continue;
+      }
+
+      // Only rename if names are different
+      if (pair.original !== pair.new) {
+        fs.renameSync(oldPath, newPath);
+
+        // Also rename associated metadata JSON file if it exists
+        const metadataOldPath = `${oldPath}.supplemental-metadata.json`;
+        const metadataNewPath = `${newPath}.supplemental-metadata.json`;
+        if (fs.existsSync(metadataOldPath)) {
+          try {
+            fs.renameSync(metadataOldPath, metadataNewPath);
+          } catch (err) {
+            console.warn(`Warning: Could not rename metadata file: ${err.message}`);
+          }
+        }
+
+        results.push({
+          originalFile: pair.original,
+          newFile: pair.new,
+          status: 'success',
+        });
+        processedCount++;
+      } else {
+        results.push({
+          originalFile: pair.original,
+          newFile: pair.new,
+          status: 'skipped',
+          error: 'Filename unchanged',
+        });
+      }
+    } catch (error) {
+      results.push({
+        originalFile: pair.original,
+        newFile: pair.new,
+        status: 'error',
+        error: error.message,
+      });
+      failedCount++;
+    }
+  }
+
+  return {
+    success: failedCount === 0,
+    message: `Processed ${processedCount} file(s)${failedCount > 0 ? `, ${failedCount} failed` : ''}`,
+    processedCount,
+    failedCount,
+    results,
+  };
+}
+
+async function listImagesInFolder(folderPath) {
+  try {
+    const imageFormats = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'];
+    const files = fs.readdirSync(folderPath);
+    const photoInfos = [];
+
+    for (const filename of files) {
+      // Skip metadata files and hidden files
+      if (filename.endsWith('.supplemental-metadata.json') || filename.startsWith('.')) {
+        continue;
+      }
+
+      const ext = extname(filename).toLowerCase();
+      if (!imageFormats.includes(ext)) {
+        continue;
+      }
+
+      const filePath = join(folderPath, filename);
+      let latitude = null;
+      let longitude = null;
+
+      // Try to get geolocation from metadata
+      const metadataPath = `${filePath}.supplemental-metadata.json`;
+      let metadataFilePath = metadataPath;
+
+      // If file's own metadata doesn't exist, try to find related metadata
+      if (!fs.existsSync(metadataPath)) {
+        const fileNameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+        const relatedMetadata = files.find(f =>
+          f.startsWith(fileNameWithoutExt) && f.endsWith('.supplemental-metadata.json')
+        );
+        if (relatedMetadata) {
+          metadataFilePath = join(folderPath, relatedMetadata);
+        }
+      }
+
+      if (fs.existsSync(metadataFilePath)) {
+        try {
+          const metadataContent = fs.readFileSync(metadataFilePath, 'utf-8');
+          const metadata = JSON.parse(metadataContent);
+          if (metadata.geoData && metadata.geoData.latitude !== undefined && metadata.geoData.longitude !== undefined) {
+            latitude = metadata.geoData.latitude;
+            longitude = metadata.geoData.longitude;
+          }
+        } catch (err) {
+          // Metadata parsing failed, continue without geolocation
+        }
+      }
+
+      // Only include if there's valid geolocation data (not 0,0)
+      if (latitude !== null && longitude !== null && !(latitude === 0 && longitude === 0)) {
+        photoInfos.push({
+          filename: filename,
+          path: filePath,
+          latitude: latitude,
+          longitude: longitude,
+          address: null,
+        });
+      }
+    }
+
+    return photoInfos;
+  } catch (error) {
+    throw new Error(`Failed to list images: ${error.message}`);
+  }
+}
+
+const geoLocationCache = {};
+
+async function getGeoLocationAddresses(photos) {
+  const results = [];
+  const accessToken = process.env.LOCATIONIQ_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    throw new Error('LOCATIONIQ_ACCESS_TOKEN environment variable is not set');
+  }
+
+  for (const photo of photos) {
+    try {
+      const cacheKey = `${photo.latitude},${photo.longitude}`;
+
+      // Check cache first
+      if (geoLocationCache[cacheKey]) {
+        results.push({
+          filename: photo.filename,
+          address: geoLocationCache[cacheKey],
+        });
+        continue;
+      }
+
+      // Fetch from LocationIQ API
+      const apiUrl = `https://us1.locationiq.com/v1/reverse?key=${accessToken}&lat=${photo.latitude}&lon=${photo.longitude}&format=json`;
+
+      console.log(`[LocationIQ] Fetching address for ${photo.filename}`);
+      console.log(`[LocationIQ] API URL: ${apiUrl.replace(accessToken, 'HIDDEN_TOKEN')}`);
+      console.log(`[LocationIQ] Coordinates: lat=${photo.latitude}, lon=${photo.longitude}`);
+
+      try {
+        const response = await fetch(apiUrl);
+        const data = await response.json();
+
+        console.log(`[LocationIQ] Response status: ${response.status}`);
+        console.log(`[LocationIQ] Response body:`, JSON.stringify(data, null, 2));
+
+        if (!response.ok) {
+          throw new Error(`LocationIQ API returned status ${response.status}`);
+        }
+
+        if (data.display_name) {
+          // Extract first 3 parts from comma-separated string
+          const parts = data.display_name.split(',').slice(0, 3);
+          const address = parts.map(p => p.trim()).join(', ');
+          geoLocationCache[cacheKey] = address;
+          console.log(`[LocationIQ] Success - Address: ${address}`);
+
+          results.push({
+            filename: photo.filename,
+            address: address,
+          });
+        } else {
+          console.log(`[LocationIQ] No display_name found in response`);
+          console.log(`[LocationIQ] Response keys:`, Object.keys(data));
+          results.push({
+            filename: photo.filename,
+            address: 'Address not found',
+          });
+        }
+      } catch (err) {
+        console.error(`[LocationIQ] Error fetching address for ${photo.filename}:`, err.message);
+        results.push({
+          filename: photo.filename,
+          address: 'Error fetching address',
+        });
+      }
+    } catch (error) {
+      console.error(`Error processing photo ${photo.filename}:`, error.message);
+    }
+  }
+
+  return {
+    success: true,
+    message: `Fetched addresses for ${results.length} photo(s)`,
+    results,
+  };
+}
+
 // Server setup
 const app = express();
 
@@ -1119,8 +1579,63 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Serve thumbnails
-app.use('/thumbnails', express.static(THUMBNAIL_DIR));
+// Serve image by file path (with HEIC conversion support)
+app.get('/image', async (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) {
+    return res.status(400).json({ error: 'Missing path parameter' });
+  }
+
+  try {
+    const expandedPath = filePath.startsWith('~')
+      ? filePath.replace('~', os.homedir())
+      : filePath;
+
+    // Prevent directory traversal attacks
+    const normalizedPath = normalize(expandedPath);
+    if (normalizedPath.includes('..')) {
+      return res.status(400).json({ error: 'Invalid path' });
+    }
+
+    if (!fs.existsSync(normalizedPath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    const fileExt = extname(normalizedPath).toLowerCase();
+    const isHeic = fileExt === '.heic' || fileExt === '.heif';
+
+    if (isHeic) {
+      // Generate cache path for JPEG version
+      const fileName = normalizedPath.split('/').pop();
+      const cachedJpgPath = join(THUMBNAIL_DIR, `${fileName}.jpg`);
+
+      // Check if cached version exists
+      if (fs.existsSync(cachedJpgPath)) {
+        console.log(`[Image] Serving cached JPEG for ${fileName}`);
+        return res.sendFile(cachedJpgPath);
+      }
+
+      // Convert HEIC to JPEG using ffmpeg
+      console.log(`[Image] Converting HEIC to JPEG: ${fileName}`);
+      try {
+        execSync(`ffmpeg -i "${normalizedPath}" -q:v 2 "${cachedJpgPath}" -y 2>/dev/null`, {
+          stdio: 'pipe',
+        });
+        console.log(`[Image] Cached JPEG saved: ${cachedJpgPath}`);
+        return res.sendFile(cachedJpgPath);
+      } catch (ffmpegErr) {
+        console.error(`[Image] ffmpeg conversion failed: ${ffmpegErr.message}`);
+        // Fallback: serve original HEIC (Safari will display it)
+        return res.sendFile(normalizedPath);
+      }
+    } else {
+      res.sendFile(normalizedPath);
+    }
+  } catch (err) {
+    console.error(`Error serving image: ${err.message}`);
+    res.status(500).json({ error: 'Failed to serve image' });
+  }
+});
 
 const PORT = process.env.PORT || 4000;
 const httpServer = app.listen(PORT, () => {
