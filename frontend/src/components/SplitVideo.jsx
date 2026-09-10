@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import FileSelector from './FileSelector';
 import ProgressBar from './ProgressBar';
 import './SplitVideo.css';
 
@@ -6,7 +7,6 @@ const BACKEND_URL = 'http://localhost:4000';
 
 export default function SplitVideo({ settings, setSettings }) {
   const [selectedFile, setSelectedFile] = useState(null);
-  const [lastFileLocation, setLastFileLocation] = useState(settings.lastFileLocation || '');
   const [mode, setMode] = useState('size'); // 'size' or 'time'
   const [sizeValue, setSizeValue] = useState(50); // in MB
   const [timeValue, setTimeValue] = useState(1); // in minutes
@@ -16,20 +16,11 @@ export default function SplitVideo({ settings, setSettings }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const handleFileSelect = (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      setSelectedFile(file);
-      setError('');
-      setSuccess('');
+  const handleFileSelect = (file) => {
+    setSelectedFile(file);
+    if (file.path) {
+      setSettings({ ...settings, lastFileLocation: file.path });
     }
-  };
-
-  const handleFilePathChange = (e) => {
-    const path = e.target.value;
-    setLastFileLocation(path);
-    setSettings({ ...settings, lastFileLocation: path });
-    setSelectedFile({ name: path.split('/').pop(), path: path });
     setError('');
     setSuccess('');
   };
@@ -123,40 +114,12 @@ export default function SplitVideo({ settings, setSettings }) {
       <div className="section">
         <h2>Split Video File</h2>
 
-        <div className="file-picker-section">
-          <div className="file-input-group">
-            <label>Video File Path:</label>
-            <input
-              type="text"
-              value={lastFileLocation}
-              onChange={handleFilePathChange}
-              placeholder="/path/to/video.mkv"
-              disabled={splitting}
-              className="text-input-large"
-            />
-            <small>Enter the full file path (e.g., /Users/maheshnatarajan/Downloads/video/movie.mkv)</small>
-          </div>
-
-          <div className="file-picker-divider">or</div>
-
-          <div className="file-input-group">
-            <label>Select from Computer:</label>
-            <input
-              type="file"
-              accept="video/*"
-              onChange={handleFileSelect}
-              disabled={splitting}
-              className="file-input"
-            />
-          </div>
-
-          {selectedFile && (
-            <div className="selected-file">
-              <p>Selected: {selectedFile.name}</p>
-              <p className="file-path-display">{selectedFile.path}</p>
-            </div>
-          )}
-        </div>
+        <FileSelector
+          selectedFile={selectedFile}
+          onFileSelect={handleFileSelect}
+          disabled={splitting}
+          title="Video File Path"
+        />
       </div>
 
       {selectedFile && (

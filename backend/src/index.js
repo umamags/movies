@@ -1,7 +1,7 @@
 import express from 'express';
 import { ApolloServer } from 'apollo-server-express';
 import { readdir, stat, writeFile, mkdir as mkdirFs } from 'fs/promises';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { extname, join, resolve } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
@@ -78,6 +78,8 @@ const typeDefs = `
     getSettings: Settings!
     getThumbnail(videoPath: String!): String!
     getMediaLocation(mediaPath: String!): String
+    getVideoDuration(filePath: String!): Float
+    fetchChannelVideos(channelUrl: String!, pageToken: String, searchQuery: String): YoutubeChannelVideosResult!
   }
 
   type SplitResult {
@@ -86,11 +88,79 @@ const typeDefs = `
     parts: Int!
   }
 
+  type ExtractAudioResult {
+    success: Boolean!
+    message: String!
+    audioFile: String
+  }
+
+  type DeleteAudioResult {
+    success: Boolean!
+    message: String!
+    outputFile: String
+  }
+
+  type EditVideoResult {
+    success: Boolean!
+    message: String!
+    outputFile: String
+  }
+
+  type YoutubeDownloadResult {
+    success: Boolean!
+    message: String!
+    filename: String
+  }
+
+  type YoutubeVideo {
+    id: String!
+    title: String!
+    duration: String!
+    views: Int!
+    published: String!
+    thumbnail: String!
+  }
+
+  type YoutubeChannelVideosResult {
+    success: Boolean!
+    message: String!
+    videos: [YoutubeVideo!]
+    nextPageToken: String
+    totalCount: Int
+  }
+
+  type YoutubeDownloadMultipleResult {
+    success: Boolean!
+    message: String!
+    downloadedCount: Int!
+    failedCount: Int!
+    downloadedVideos: [String!]
+    failedVideos: [String!]
+  }
+
   input SplitVideoInput {
     filePath: String!
     mode: String!
     sizeValue: Float
     timeValue: Float
+  }
+
+  input ExtractAudioInput {
+    filePath: String!
+  }
+
+  input DeleteAudioInput {
+    filePath: String!
+  }
+
+  input DeletionRangeInput {
+    startTime: String!
+    endTime: String!
+  }
+
+  input EditVideoInput {
+    filePath: String!
+    deletionRanges: [DeletionRangeInput!]!
   }
 
   input CombineMediaInput {
@@ -107,6 +177,11 @@ const typeDefs = `
     combineMedia(input: CombineMediaInput!): CombineResult!
     saveSettings(defaultFolder: String!, outputQuality: String!, lastOutputName: String!): Settings!
     splitVideo(input: SplitVideoInput!): SplitResult!
+    extractAudio(input: ExtractAudioInput!): ExtractAudioResult!
+    deleteAudio(input: DeleteAudioInput!): DeleteAudioResult!
+    editVideo(input: EditVideoInput!): EditVideoResult!
+    downloadYoutube(url: String!): YoutubeDownloadResult!
+    downloadMultipleYoutube(urls: [String!]!): YoutubeDownloadMultipleResult!
   }
 
   type Subscription {
@@ -218,6 +293,36 @@ const resolvers = {
       } catch (error) {
         console.error('Failed to get media location:', error.message);
         return null;
+      }
+    },
+
+    getVideoDuration: async (_, { filePath }) => {
+      try {
+        const expandedPath = expandPath(filePath);
+        return getVideoDuration(expandedPath);
+      } catch (error) {
+        console.error('Error getting video duration:', error.message);
+        return 0;
+      }
+    },
+
+    fetchChannelVideos: async (_, { channelUrl, pageToken, searchQuery }) => {
+      try {
+        const result = await fetchChannelVideos(channelUrl, pageToken, searchQuery || '');
+        return {
+          success: true,
+          message: 'Videos fetched successfully',
+          ...result,
+        };
+      } catch (error) {
+        console.error('Error fetching channel videos:', error.message);
+        return {
+          success: false,
+          message: error.message,
+          videos: [],
+          nextPageToken: null,
+          totalCount: 0,
+        };
       }
     },
   },
@@ -391,6 +496,77 @@ const resolvers = {
           success: false,
           message: error.message,
           parts: 0,
+        };
+      }
+    },
+
+    extractAudio: async (_, { input }) => {
+      try {
+        const expandedFilePath = expandPath(input.filePath);
+        const result = await extractAudioFile(expandedFilePath);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          audioFile: null,
+        };
+      }
+    },
+
+    deleteAudio: async (_, { input }) => {
+      try {
+        const expandedFilePath = expandPath(input.filePath);
+        const result = await deleteAudioFile(expandedFilePath);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          outputFile: null,
+        };
+      }
+    },
+
+    editVideo: async (_, { input }) => {
+      try {
+        const expandedFilePath = expandPath(input.filePath);
+        const result = await editVideoFile(expandedFilePath, input.deletionRanges);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          outputFile: null,
+        };
+      }
+    },
+
+    downloadYoutube: async (_, { url }) => {
+      try {
+        const result = await downloadYoutubeVideo(url);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          filename: null,
+        };
+      }
+    },
+
+    downloadMultipleYoutube: async (_, { urls }) => {
+      try {
+        const result = await downloadMultipleYoutubeVideos(urls);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          downloadedCount: 0,
+          failedCount: urls.length,
+          downloadedVideos: [],
+          failedVideos: urls,
         };
       }
     },
@@ -584,6 +760,337 @@ async function splitVideoFile(filePath, mode, sizeValue, timeValue) {
   } catch (error) {
     console.error('Failed to split video:', error.message);
     throw new Error(`Failed to split video: ${error.message}`);
+  }
+}
+
+async function extractAudioFile(filePath) {
+  try {
+    console.log(`Extracting audio from: ${filePath}`);
+
+    const fileDir = filePath.substring(0, filePath.lastIndexOf('/'));
+    const fileNameFull = filePath.substring(filePath.lastIndexOf('/') + 1);
+    const fileExt = extname(fileNameFull);
+    const fileNameWithoutExt = fileNameFull.substring(0, fileNameFull.length - fileExt.length);
+
+    const audioOutputPath = join(fileDir, `${fileNameWithoutExt}.mp3`);
+
+    // Extract audio using ffmpeg
+    const ffmpegCmd = `ffmpeg -i "${filePath}" -vn -codec:a libmp3lame -q:a 2 "${audioOutputPath}" -y`;
+
+    console.log(`Running: ${ffmpegCmd}`);
+    execSync(ffmpegCmd, { stdio: 'pipe' });
+
+    console.log(`Audio extracted to: ${audioOutputPath}`);
+
+    return {
+      success: true,
+      message: `Audio extracted successfully`,
+      audioFile: audioOutputPath,
+    };
+  } catch (error) {
+    console.error('Failed to extract audio:', error.message);
+    throw new Error(`Failed to extract audio: ${error.message}`);
+  }
+}
+
+async function deleteAudioFile(filePath) {
+  try {
+    console.log(`Deleting audio from: ${filePath}`);
+
+    const fileDir = filePath.substring(0, filePath.lastIndexOf('/'));
+    const fileNameFull = filePath.substring(filePath.lastIndexOf('/') + 1);
+    const fileExt = extname(fileNameFull);
+    const fileNameWithoutExt = fileNameFull.substring(0, fileNameFull.length - fileExt.length);
+
+    const videoOutputPath = join(fileDir, `${fileNameWithoutExt}-modified${fileExt}`);
+
+    // Delete audio using ffmpeg (copy video codec, remove audio)
+    const ffmpegCmd = `ffmpeg -i "${filePath}" -c:v copy -an "${videoOutputPath}" -y`;
+
+    console.log(`Running: ${ffmpegCmd}`);
+    execSync(ffmpegCmd, { stdio: 'pipe' });
+
+    console.log(`Audio deleted from: ${videoOutputPath}`);
+
+    return {
+      success: true,
+      message: `Audio deleted successfully`,
+      outputFile: videoOutputPath,
+    };
+  } catch (error) {
+    console.error('Failed to delete audio:', error.message);
+    throw new Error(`Failed to delete audio: ${error.message}`);
+  }
+}
+
+function timeStringToSeconds(timeStr) {
+  const parts = timeStr.split(':');
+  if (parts.length !== 3) return 0;
+  const hours = parseInt(parts[0]) || 0;
+  const minutes = parseInt(parts[1]) || 0;
+  const seconds = parseInt(parts[2]) || 0;
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function sanitizeFilename(filename) {
+  return filename
+    .replace(/[<>:"/\\|?*]/g, '-')
+    .replace(/\s+/g, '_')
+    .substring(0, 200);
+}
+
+async function fetchChannelVideos(channelUrl, pageToken, searchQuery) {
+  try {
+    console.log(`Fetching channel videos: ${channelUrl}`);
+
+    const scriptPath = join(dirname(fileURLToPath(import.meta.url)), 'youtube_helper.py');
+    const pageTokenArg = pageToken || 'null';
+    const pythonPath = '/opt/anaconda3/bin/python3';
+
+    const cmd = `${pythonPath} "${scriptPath}" "${channelUrl}" "${pageTokenArg}" "${searchQuery || ''}"`;
+
+    console.log(`Running: ${cmd}`);
+    const output = execSync(cmd, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024,
+      cwd: dirname(fileURLToPath(import.meta.url))
+    });
+
+    const result = JSON.parse(output);
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Failed to fetch channel videos:', error.message);
+    throw new Error(`Failed to fetch channel videos: ${error.message}`);
+  }
+}
+
+async function downloadYoutubeVideo(url) {
+  try {
+    console.log(`Downloading from YouTube: ${url}`);
+
+    // Validate YouTube URL
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|youtube\.com\/playlist|youtube\.com\/channel|youtube\.com\/@)\S+$/i;
+    if (!youtubeRegex.test(url)) {
+      throw new Error('Invalid YouTube URL format');
+    }
+
+    // Detect URL type
+    let urlType = 'video';
+    if (url.includes('/playlist')) {
+      urlType = 'playlist';
+    } else if (url.includes('/channel/') || url.includes('/@')) {
+      urlType = 'channel';
+    }
+
+    if (urlType === 'playlist') {
+      throw new Error('This is a playlist URL. Multiple videos will be downloaded to your Downloads folder.');
+    }
+
+    if (urlType === 'channel') {
+      throw new Error('This is a channel URL. All videos from this channel will be downloaded to your Downloads folder.');
+    }
+
+    const downloadsPath = expandPath('~/Downloads');
+
+    // Run yt-dlp command with output template
+    const cmd = `yt-dlp -P "${downloadsPath}" -o "%(title)s.%(ext)s" "${url}"`;
+
+    console.log(`Running: ${cmd}`);
+    const output = execSync(cmd, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024
+    });
+
+    console.log(`Download output: ${output}`);
+
+    // Extract filename from yt-dlp output or generate one
+    let filename = 'Downloaded video';
+
+    // Try to parse the output for the downloaded filename
+    const filenameMatch = output.match(/\[download\].*?"([^"]+)"/);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    } else {
+      // Fallback: use generic name with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      filename = `youtube_download_${timestamp}`;
+    }
+
+    return {
+      success: true,
+      message: `Video downloaded successfully to Downloads folder`,
+      filename: sanitizeFilename(filename),
+    };
+  } catch (error) {
+    console.error('Failed to download from YouTube:', error.message);
+
+    // Check for specific error conditions
+    if (error.message.includes('This is a playlist URL')) {
+      return {
+        success: false,
+        message: error.message,
+        filename: null,
+      };
+    }
+
+    if (error.message.includes('This is a channel URL')) {
+      return {
+        success: false,
+        message: error.message,
+        filename: null,
+      };
+    }
+
+    throw new Error(`YouTube download failed: ${error.message}`);
+  }
+}
+
+async function downloadMultipleYoutubeVideos(urls) {
+  const downloadsPath = expandPath('~/Downloads');
+  const downloadedVideos = [];
+  const failedVideos = [];
+  const MAX_CONCURRENT = 3;
+
+  // Process downloads with concurrency limit
+  for (let i = 0; i < urls.length; i += MAX_CONCURRENT) {
+    const batch = urls.slice(i, i + MAX_CONCURRENT);
+    const promises = batch.map(async (url) => {
+      try {
+        console.log(`Downloading: ${url}`);
+        const cmd = `yt-dlp -P "${downloadsPath}" -o "%(title)s.%(ext)s" "${url}"`;
+        const output = execSync(cmd, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          maxBuffer: 10 * 1024 * 1024
+        });
+
+        const filenameMatch = output.match(/\[download\].*?"([^"]+)"/);
+        const filename = filenameMatch ? filenameMatch[1] : 'Downloaded video';
+
+        downloadedVideos.push(sanitizeFilename(filename));
+        return { success: true };
+      } catch (err) {
+        console.error(`Failed to download ${url}:`, err.message);
+        failedVideos.push(url);
+        return { success: false };
+      }
+    });
+
+    await Promise.all(promises);
+  }
+
+  return {
+    success: failedVideos.length === 0,
+    message: `Downloaded ${downloadedVideos.length}/${urls.length} videos`,
+    downloadedCount: downloadedVideos.length,
+    failedCount: failedVideos.length,
+    downloadedVideos,
+    failedVideos,
+  };
+}
+
+async function editVideoFile(filePath, deletionRanges) {
+  try {
+    console.log(`Editing video: ${filePath}`);
+    console.log(`Deletion ranges: ${JSON.stringify(deletionRanges)}`);
+
+    const fileDir = filePath.substring(0, filePath.lastIndexOf('/'));
+    const fileNameFull = filePath.substring(filePath.lastIndexOf('/') + 1);
+    const fileExt = extname(fileNameFull);
+    const fileNameWithoutExt = fileNameFull.substring(0, fileNameFull.length - fileExt.length);
+
+    const videoDuration = getVideoDuration(filePath);
+    console.log(`Video duration: ${videoDuration} seconds`);
+
+    // Convert deletion ranges to seconds and sort them
+    const deletionSegments = deletionRanges
+      .map(r => ({
+        start: timeStringToSeconds(r.startTime),
+        end: timeStringToSeconds(r.endTime)
+      }))
+      .sort((a, b) => a.start - b.start);
+
+    // Calculate portions to keep
+    const keepSegments = [];
+    let currentPos = 0;
+
+    deletionSegments.forEach(range => {
+      if (currentPos < range.start) {
+        keepSegments.push({ start: currentPos, end: range.start });
+      }
+      currentPos = Math.max(currentPos, range.end);
+    });
+
+    if (currentPos < videoDuration) {
+      keepSegments.push({ start: currentPos, end: videoDuration });
+    }
+
+    console.log(`Keep segments: ${JSON.stringify(keepSegments)}`);
+
+    if (keepSegments.length === 0) {
+      throw new Error('No video content to keep after deletion ranges');
+    }
+
+    // Create temporary directory for segments
+    const tempDir = join(fileDir, `.edit_${uuidv4()}`);
+    await mkdirFs(tempDir, { recursive: true });
+
+    try {
+      // Extract each keep segment
+      const segmentFiles = [];
+
+      for (let i = 0; i < keepSegments.length; i++) {
+        const segment = keepSegments[i];
+        const segmentFile = join(tempDir, `segment_${i}${fileExt}`);
+
+        const duration = segment.end - segment.start;
+        const ffmpegCmd = `ffmpeg -i "${filePath}" -ss ${segment.start} -t ${duration} -c copy "${segmentFile}" -y`;
+
+        console.log(`Extracting segment ${i}: ${ffmpegCmd}`);
+        execSync(ffmpegCmd, { stdio: 'pipe' });
+
+        segmentFiles.push(segmentFile);
+      }
+
+      // Create concat demuxer file
+      const concatFile = join(tempDir, 'concat.txt');
+      const concatContent = segmentFiles.map(f => `file '${f}'`).join('\n');
+      await writeFile(concatFile, concatContent);
+
+      console.log(`Concat file created with ${segmentFiles.length} segments`);
+
+      // Combine segments using concat demuxer
+      const outputPath = join(fileDir, `${fileNameWithoutExt}-edited${fileExt}`);
+      const ffmpegCombineCmd = `ffmpeg -f concat -safe 0 -i "${concatFile}" -c copy "${outputPath}" -y`;
+
+      console.log(`Combining segments: ${ffmpegCombineCmd}`);
+      execSync(ffmpegCombineCmd, { stdio: 'pipe' });
+
+      console.log(`Video edited and saved to: ${outputPath}`);
+
+      return {
+        success: true,
+        message: `Video edited successfully (${keepSegments.length} segment(s) kept)`,
+        outputFile: outputPath,
+      };
+    } finally {
+      // Cleanup temporary directory
+      try {
+        execSync(`rm -rf "${tempDir}"`, { stdio: 'pipe' });
+      } catch (e) {
+        console.warn(`Failed to cleanup temp directory: ${e.message}`);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to edit video:', error.message);
+    throw new Error(`Failed to edit video: ${error.message}`);
   }
 }
 

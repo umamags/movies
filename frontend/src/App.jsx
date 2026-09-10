@@ -2,6 +2,11 @@ import React, { useState, useEffect } from 'react';
 import CombineVideos from './components/CombineVideos';
 import CombineMedia from './components/CombineMedia';
 import SplitVideo from './components/SplitVideo';
+import EditVideo from './components/EditVideo';
+import ExtractAudio from './components/ExtractAudio';
+import DeleteAudio from './components/DeleteAudio';
+import YoutubeDownloader from './components/YoutubeDownloader';
+import YoutubePlaylistDownloader from './components/YoutubePlaylistDownloader';
 import './App.css';
 
 export default function App() {
@@ -46,18 +51,34 @@ export default function App() {
             Split Videos
           </button>
           <button
+            className={`tab ${activeTab === 'edit' ? 'active' : ''}`}
+            onClick={() => setActiveTab('edit')}
+          >
+            Edit Video
+          </button>
+          <button
             className={`tab ${activeTab === 'extractAudio' ? 'active' : ''}`}
             onClick={() => setActiveTab('extractAudio')}
-            disabled
           >
             Extract Audio
           </button>
           <button
             className={`tab ${activeTab === 'deleteAudio' ? 'active' : ''}`}
             onClick={() => setActiveTab('deleteAudio')}
-            disabled
           >
             Delete Audio
+          </button>
+          <button
+            className={`tab ${activeTab === 'youtube' ? 'active' : ''}`}
+            onClick={() => setActiveTab('youtube')}
+          >
+            Youtube Downloader
+          </button>
+          <button
+            className={`tab ${activeTab === 'youtubePlaylist' ? 'active' : ''}`}
+            onClick={() => setActiveTab('youtubePlaylist')}
+          >
+            Youtube Playlist Downloader
           </button>
           <button
             className={`tab ${activeTab === 'create' ? 'active' : ''}`}
@@ -78,8 +99,17 @@ export default function App() {
           {activeTab === 'split' && (
             <SplitVideo settings={settings} setSettings={setSettings} />
           )}
-          {activeTab === 'extractAudio' && <div>Extract Audio Coming Soon</div>}
-          {activeTab === 'deleteAudio' && <div>Delete Audio Coming Soon</div>}
+          {activeTab === 'edit' && (
+            <EditVideo settings={settings} setSettings={setSettings} />
+          )}
+          {activeTab === 'extractAudio' && (
+            <ExtractAudio settings={settings} setSettings={setSettings} />
+          )}
+          {activeTab === 'deleteAudio' && (
+            <DeleteAudio settings={settings} setSettings={setSettings} />
+          )}
+          {activeTab === 'youtube' && <YoutubeDownloader />}
+          {activeTab === 'youtubePlaylist' && <YoutubePlaylistDownloader />}
           {activeTab === 'create' && <div>Create Movie Coming Soon</div>}
         </div>
       </div>
