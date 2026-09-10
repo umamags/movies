@@ -7,6 +7,7 @@ import ExtractAudio from './components/ExtractAudio';
 import DeleteAudio from './components/DeleteAudio';
 import YoutubeDownloader from './components/YoutubeDownloader';
 import YoutubePlaylistDownloader from './components/YoutubePlaylistDownloader';
+import Timestamps from './components/Timestamps';
 import './App.css';
 
 export default function App() {
@@ -32,6 +33,12 @@ export default function App() {
 
       <div className="container">
         <nav className="tabs">
+          <button
+            className={`tab ${activeTab === 'timestamps' ? 'active' : ''}`}
+            onClick={() => setActiveTab('timestamps')}
+          >
+            Timestamps
+          </button>
           <button
             className={`tab ${activeTab === 'combine' ? 'active' : ''}`}
             onClick={() => setActiveTab('combine')}
@@ -90,6 +97,7 @@ export default function App() {
         </nav>
 
         <div className="tab-content">
+          {activeTab === 'timestamps' && <Timestamps />}
           {activeTab === 'combine' && (
             <CombineVideos settings={settings} setSettings={setSettings} />
           )}
