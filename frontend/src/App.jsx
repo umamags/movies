@@ -7,6 +7,7 @@ import ExtractAudio from './components/ExtractAudio';
 import DeleteAudio from './components/DeleteAudio';
 import YoutubeDownloader from './components/YoutubeDownloader';
 import YoutubePlaylistDownloader from './components/YoutubePlaylistDownloader';
+import YoutubeSubscriptions from './components/YoutubeSubscriptions';
 import Timestamps from './components/Timestamps';
 import PhotoLabeller from './components/PhotoLabeller';
 import './App.css';
@@ -95,6 +96,12 @@ export default function App() {
             Youtube Playlist Downloader
           </button>
           <button
+            className={`tab ${activeTab === 'youtubeSubscriptions' ? 'active' : ''}`}
+            onClick={() => setActiveTab('youtubeSubscriptions')}
+          >
+            Youtube Subscriptions
+          </button>
+          <button
             className={`tab ${activeTab === 'create' ? 'active' : ''}`}
             onClick={() => setActiveTab('create')}
             disabled
@@ -126,6 +133,7 @@ export default function App() {
           )}
           {activeTab === 'youtube' && <YoutubeDownloader />}
           {activeTab === 'youtubePlaylist' && <YoutubePlaylistDownloader />}
+          {activeTab === 'youtubeSubscriptions' && <YoutubeSubscriptions />}
           {activeTab === 'create' && <div>Create Movie Coming Soon</div>}
         </div>
       </div>

@@ -67,6 +67,56 @@ export default function PhotoLabeller() {
     window.open(viewerUrl, '_blank');
   };
 
+  const handleDeletePhoto = async (photoIndex) => {
+    const photo = photos[photoIndex];
+    const confirmed = window.confirm(`Delete "${photo.filename}"? This cannot be undone.`);
+
+    if (!confirmed) return;
+
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const mutation = `
+        mutation DeletePhoto($filePath: String!) {
+          deletePhoto(filePath: $filePath) {
+            success
+            message
+          }
+        }
+      `;
+
+      const response = await fetch(`${BACKEND_URL}/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: mutation,
+          variables: { filePath: photo.path }
+        }),
+      });
+
+      const data = await response.json();
+      if (data.errors) {
+        throw new Error(data.errors[0].message);
+      }
+
+      const result = data.data.deletePhoto;
+      if (result.success) {
+        // Remove photo from grid
+        const updatedPhotos = photos.filter((_, idx) => idx !== photoIndex);
+        setPhotos(updatedPhotos);
+        setSuccess(`✅ ${result.message}`);
+      } else {
+        setError(`Failed to delete: ${result.message}`);
+      }
+    } catch (err) {
+      setError(`Error deleting photo: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleEditLabel = (photoIndex, currentAddress) => {
     setLabelEditing({
       photoIndex,
@@ -81,9 +131,11 @@ export default function PhotoLabeller() {
     const photo = photos[labelEditing.photoIndex];
     setLabelEditing({ ...labelEditing, isUpdating: true });
     setError('');
+    setSuccess('');
 
     try {
-      const mutation = `
+      // Step 1: Add label to photo metadata
+      const labelMutation = `
         mutation AddLabelToPhoto($filePath: String!, $label: String!) {
           addLabelToPhoto(filePath: $filePath, label: $label) {
             success
@@ -92,11 +144,11 @@ export default function PhotoLabeller() {
         }
       `;
 
-      const response = await fetch(`${BACKEND_URL}/graphql`, {
+      const labelResponse = await fetch(`${BACKEND_URL}/graphql`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: mutation,
+          query: labelMutation,
           variables: {
             filePath: photo.path,
             label: labelEditing.text,
@@ -104,25 +156,61 @@ export default function PhotoLabeller() {
         }),
       });
 
-      const data = await response.json();
-      if (data.errors) {
-        throw new Error(data.errors[0].message);
+      const labelData = await labelResponse.json();
+      if (labelData.errors) {
+        throw new Error(labelData.errors[0].message);
       }
 
-      const result = data.data.addLabelToPhoto;
-      if (result.success) {
-        // Update photo with label in UI
-        const updatedPhotos = [...photos];
-        updatedPhotos[labelEditing.photoIndex].label = labelEditing.text;
-        setPhotos(updatedPhotos);
-        setSuccess('Label added to photo');
-        setLabelEditing({ photoIndex: null, text: '', isUpdating: false });
-      } else {
-        setError(`Failed: ${result.message}`);
+      const labelResult = labelData.data.addLabelToPhoto;
+      if (!labelResult.success) {
+        throw new Error(labelResult.message);
       }
+
+      // Step 2: Create captioned version of the photo
+      const captionMutation = `
+        mutation AddCaptionToPhoto($filePath: String!, $caption: String!) {
+          addCaptionToPhoto(filePath: $filePath, caption: $caption) {
+            success
+            message
+            captionedFilePath
+          }
+        }
+      `;
+
+      const captionResponse = await fetch(`${BACKEND_URL}/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: captionMutation,
+          variables: {
+            filePath: photo.path,
+            caption: labelEditing.text,
+          }
+        }),
+      });
+
+      const captionData = await captionResponse.json();
+      if (captionData.errors) {
+        throw new Error(captionData.errors[0].message);
+      }
+
+      const captionResult = captionData.data.addCaptionToPhoto;
+
+      // Update photo with label in UI
+      const updatedPhotos = [...photos];
+      updatedPhotos[labelEditing.photoIndex].label = labelEditing.text;
+      setPhotos(updatedPhotos);
+
+      if (captionResult.success) {
+        setSuccess('✅ Label updated and captioned image created');
+      } else {
+        setSuccess('✅ Label updated (caption creation failed, but label was saved)');
+        setError(`Caption warning: ${captionResult.message}`);
+      }
+
+      setLabelEditing({ photoIndex: null, text: '', isUpdating: false });
     } catch (err) {
       setError(`Error updating label: ${err.message}`);
-    } finally {
       setLabelEditing({ ...labelEditing, isUpdating: false });
     }
   };
@@ -148,6 +236,9 @@ export default function PhotoLabeller() {
               latitude
               longitude
               address
+              width
+              height
+              size
             }
           }
         }
@@ -430,8 +521,9 @@ export default function PhotoLabeller() {
                               className="btn btn-sm btn-primary"
                               onClick={handleUpdateLabel}
                               disabled={labelEditing.isUpdating || !labelEditing.text.trim()}
+                              title="Updates label and creates captioned image"
                             >
-                              {labelEditing.isUpdating ? 'Updating...' : '✓ Update'}
+                              {labelEditing.isUpdating ? 'Creating caption...' : '✓ Update & Caption'}
                             </button>
                             <button
                               className="btn btn-sm btn-secondary"
@@ -465,6 +557,14 @@ export default function PhotoLabeller() {
                           Get Address
                         </button>
                       )}
+                      <button
+                        className="btn btn-sm btn-danger"
+                        onClick={() => handleDeletePhoto(idx)}
+                        disabled={loading || fetching || labelEditing.photoIndex === idx}
+                        title="Delete this photo permanently"
+                      >
+                        🗑️ Delete
+                      </button>
                     </div>
                   </div>
                 );

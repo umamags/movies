@@ -85,6 +85,7 @@ const typeDefs = `
     fetchChannelVideos(channelUrl: String!, pageToken: String, searchQuery: String): YoutubeChannelVideosResult!
     listFilesInFolder(folderPath: String!): FileListResult!
     listImagesInFolder(folderPath: String!): ImagesListResult!
+    getYoutubeSubscriptions: FetchSubscriptionsResult!
   }
 
   type SplitResult {
@@ -232,6 +233,18 @@ const typeDefs = `
     photos: [PhotoInfo!]
   }
 
+  type Subscription {
+    channel_title: String!
+    handle: String!
+    channel_id: String!
+  }
+
+  type FetchSubscriptionsResult {
+    success: Boolean!
+    message: String!
+    subscriptions: [Subscription!]
+  }
+
   input PhotoLocationInput {
     filename: String!
     latitude: Float!
@@ -254,6 +267,17 @@ const typeDefs = `
     message: String!
   }
 
+  type AddCaptionResult {
+    success: Boolean!
+    message: String!
+    captionedFilePath: String
+  }
+
+  type DeletePhotoResult {
+    success: Boolean!
+    message: String!
+  }
+
   type Mutation {
     combineVideos(input: CombineInput!): CombineResult!
     combineMedia(input: CombineMediaInput!): CombineResult!
@@ -267,6 +291,8 @@ const typeDefs = `
     processTimestamps(input: ProcessTimestampsInput!): TimestampsResult!
     getGeoLocations(photos: [PhotoLocationInput!]!): GetGeoLocationsResult!
     addLabelToPhoto(filePath: String!, label: String!): AddLabelResult!
+    addCaptionToPhoto(filePath: String!, caption: String!): AddCaptionResult!
+    deletePhoto(filePath: String!): DeletePhotoResult!
   }
 
   type Subscription {
@@ -445,6 +471,20 @@ const resolvers = {
           success: false,
           message: error.message,
           photos: [],
+        };
+      }
+    },
+
+    getYoutubeSubscriptions: async () => {
+      try {
+        const result = await fetchYoutubeSubscriptions();
+        return result;
+      } catch (error) {
+        console.error('Error fetching subscriptions:', error.message);
+        return {
+          success: false,
+          message: error.message,
+          subscriptions: [],
         };
       }
     },
@@ -726,6 +766,31 @@ const resolvers = {
     addLabelToPhoto: async (_, { filePath, label }) => {
       try {
         const result = await addLabelToPhotoFile(filePath, label);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+        };
+      }
+    },
+
+    addCaptionToPhoto: async (_, { filePath, caption }) => {
+      try {
+        const result = await addCaptionToPhotoFile(filePath, caption);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          captionedFilePath: null,
+        };
+      }
+    },
+
+    deletePhoto: async (_, { filePath }) => {
+      try {
+        const result = await deletePhotoFile(filePath);
         return result;
       } catch (error) {
         return {
@@ -1720,6 +1785,180 @@ async function addLabelToPhotoFile(filePath, label) {
         console.warn(`[Label] Failed to delete temp file: ${err.message}`);
       }
     }
+  }
+}
+
+async function addCaptionToPhotoFile(filePath, caption) {
+  try {
+    const expandedPath = filePath.startsWith('~')
+      ? filePath.replace('~', os.homedir())
+      : filePath;
+
+    if (!fs.existsSync(expandedPath)) {
+      throw new Error('File not found');
+    }
+
+    const fileDir = expandedPath.substring(0, expandedPath.lastIndexOf('/'));
+    const filename = expandedPath.substring(expandedPath.lastIndexOf('/') + 1);
+    const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+
+    console.log(`[Caption] Adding caption to: ${expandedPath}`);
+    console.log(`[Caption] Caption text: "${caption}"`);
+
+    // Get the path to caption_single_photo.py script
+    const scriptPath = join(__dirname, '../../utils/captions/caption_single_photo.py');
+
+    if (!fs.existsSync(scriptPath)) {
+      throw new Error('caption_single_photo.py script not found');
+    }
+
+    // Call the caption script
+    const cmd = `/opt/anaconda3/bin/python3 "${scriptPath}" --photo "${expandedPath}" --caption "${caption.replace(/"/g, '\\"')}"`;
+
+    console.log(`[Caption] Running: ${cmd}`);
+    const output = execSync(cmd, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024
+    });
+
+    console.log(`[Caption] Output: ${output}`);
+
+    // Caption script outputs the captioned file path
+    const captionedFilePath = join(fileDir, `${nameWithoutExt}_labelled.jpg`);
+
+    if (!fs.existsSync(captionedFilePath)) {
+      throw new Error('Captioned file was not created');
+    }
+
+    console.log(`[Caption] Successfully created: ${captionedFilePath}`);
+
+    return {
+      success: true,
+      message: 'Caption added successfully',
+      captionedFilePath: captionedFilePath,
+    };
+  } catch (error) {
+    console.error(`[Caption] Error adding caption: ${error.message}`);
+    throw error;
+  }
+}
+
+async function deletePhotoFile(filePath) {
+  try {
+    const expandedPath = filePath.startsWith('~')
+      ? filePath.replace('~', os.homedir())
+      : filePath;
+
+    if (!fs.existsSync(expandedPath)) {
+      throw new Error('File not found');
+    }
+
+    const filename = expandedPath.substring(expandedPath.lastIndexOf('/') + 1);
+
+    console.log(`[Delete] Deleting photo: ${expandedPath}`);
+
+    // Delete the file
+    fs.unlinkSync(expandedPath);
+
+    console.log(`[Delete] Successfully deleted: ${filename}`);
+
+    return {
+      success: true,
+      message: `Photo deleted: ${filename}`,
+    };
+  } catch (error) {
+    console.error(`[Delete] Error deleting photo: ${error.message}`);
+    throw error;
+  }
+}
+
+async function fetchYoutubeSubscriptions() {
+  try {
+    console.log('[YouTube] Fetching subscriptions...');
+
+    // Run the fetch_subscription_handles.py script
+    const scriptPath = join(__dirname, '../../youtube/fetch_subscription_handles.py');
+
+    console.log('[YouTube] Script path:', scriptPath);
+    console.log('[YouTube] Script exists:', fs.existsSync(scriptPath));
+
+    if (!fs.existsSync(scriptPath)) {
+      throw new Error(`fetch_subscription_handles.py script not found at ${scriptPath}`);
+    }
+
+    const cmd = `/opt/anaconda3/bin/python3 "${scriptPath}"`;
+
+    console.log('[YouTube] Running:', cmd);
+
+    try {
+      const output = execSync(cmd, {
+        encoding: 'utf-8',
+        cwd: join(__dirname, '../../youtube'),
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      console.log('[YouTube] Output:', output);
+    } catch (execError) {
+      console.error('[YouTube] Execution error:', execError.message);
+      if (execError.stderr) console.error('[YouTube] Stderr:', execError.stderr.toString());
+      if (execError.stdout) console.error('[YouTube] Stdout:', execError.stdout.toString());
+      throw new Error(`Failed to run Python script: ${execError.message}`);
+    }
+
+    // Read the generated subscriptions.csv file
+    const csvPath = join(__dirname, '../../youtube/subscriptions.csv');
+
+    if (!fs.existsSync(csvPath)) {
+      throw new Error('subscriptions.csv was not generated');
+    }
+
+    // Parse CSV
+    const csvContent = fs.readFileSync(csvPath, 'utf-8');
+    const lines = csvContent.trim().split('\n');
+
+    if (lines.length < 2) {
+      throw new Error('No subscriptions found in CSV');
+    }
+
+    // Parse header
+    const headers = lines[0].split(',').map(h => h.trim());
+    const titleIdx = headers.indexOf('channel_title');
+    const handleIdx = headers.indexOf('handle');
+    const idIdx = headers.indexOf('channel_id');
+
+    if (titleIdx === -1 || handleIdx === -1 || idIdx === -1) {
+      throw new Error('CSV missing required columns: channel_title, handle, channel_id');
+    }
+
+    // Parse rows
+    const subscriptions = [];
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      // Handle CSV with quoted fields
+      const parts = line.match(/("([^"]*)"|[^,]+)/g) || [];
+      const row = parts.map(p => p.replace(/^"|"$/g, '').trim());
+
+      if (row.length > Math.max(titleIdx, handleIdx, idIdx)) {
+        subscriptions.push({
+          channel_title: row[titleIdx] || '',
+          handle: row[handleIdx] || '',
+          channel_id: row[idIdx] || '',
+        });
+      }
+    }
+
+    console.log('[YouTube] Parsed', subscriptions.length, 'subscriptions');
+
+    return {
+      success: true,
+      message: `Fetched ${subscriptions.length} subscriptions`,
+      subscriptions,
+    };
+  } catch (error) {
+    console.error('[YouTube] Error fetching subscriptions:', error.message);
+    throw error;
   }
 }
 

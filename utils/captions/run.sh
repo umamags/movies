@@ -1,1 +1,2 @@
-/opt/anaconda3/bin/python3 caption_photos.py --input "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-brazil-copy" --csv captions.csv --output "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-brazil-captioned"
+# /opt/anaconda3/bin/python3 caption_photos.py --input "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-brazil-copy" --csv captions.csv --output "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-brazil-captioned"
+/opt/anaconda3/bin/python3 caption_single_photo.py --photo "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-brazil-copy/20260322_124455_photo-3855_singular_display_fullPicture.heic" --caption "Path from airport to hotel"
