@@ -1,0 +1,1 @@
+/opt/anaconda3/bin/python3 caption_photos.py --input "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-brazil-copy" --csv captions.csv --output "/Users/maheshnatarajan/Downloads/Takeout/Google Photos/2026-brazil-captioned"

@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import FileSelector from './FileSelector';
 import ProgressBar from './ProgressBar';
 import MapModal from './MapModal';
 import './PhotoLabeller.css';
 
 const BACKEND_URL = 'http://localhost:4000';
+const STORAGE_KEY = 'photoLabeller_folderPath';
 
 export default function PhotoLabeller() {
-  const [folderPath, setFolderPath] = useState('');
+  const [folderPath, setFolderPath] = useState(() => {
+    return localStorage.getItem(STORAGE_KEY) || '';
+  });
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -27,6 +30,10 @@ export default function PhotoLabeller() {
     isUpdating: false,
   });
 
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, folderPath);
+  }, [folderPath]);
+
   const handleFolderSelect = (folder) => {
     setFolderPath(folder.path || folder.name);
     setPhotos([]);
@@ -45,6 +52,19 @@ export default function PhotoLabeller() {
 
   const handleCloseMap = () => {
     setMapModal({ ...mapModal, isOpen: false });
+  };
+
+  const formatFileSize = (bytes) => {
+    if (!bytes) return 'Unknown';
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    if (bytes === 0) return '0 B';
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round((bytes / Math.pow(1024, i)) * 10) / 10 + ' ' + sizes[i];
+  };
+
+  const openImageViewer = (photo) => {
+    const viewerUrl = `/image-viewer.html?path=${encodeURIComponent(photo.path)}&filename=${encodeURIComponent(photo.filename)}&width=${photo.width || 'Unknown'}&height=${photo.height || 'Unknown'}&size=${encodeURIComponent(formatFileSize(photo.size))}`;
+    window.open(viewerUrl, '_blank');
   };
 
   const handleEditLabel = (photoIndex, currentAddress) => {
@@ -224,16 +244,16 @@ export default function PhotoLabeller() {
   };
 
   const handleGetAllAddresses = async () => {
-    const photosWithLocation = photos.filter(p => p.latitude && p.longitude && !p.address);
+    const photosWithValidLocation = photos.filter(p => p.latitude && p.longitude && !p.address);
 
-    if (photosWithLocation.length === 0) {
+    if (photosWithValidLocation.length === 0) {
       setError('No photos with geolocation data to fetch');
       return;
     }
 
     setFetching(true);
     setProgress(0);
-    setProgressMessage(`Fetching addresses for ${photosWithLocation.length} photo(s)...`);
+    setProgressMessage(`Fetching addresses for ${photosWithValidLocation.length} photo(s)...`);
     setError('');
     setSuccess('');
 
@@ -257,7 +277,7 @@ export default function PhotoLabeller() {
         body: JSON.stringify({
           query: mutation,
           variables: {
-            photos: photosWithLocation.map(p => ({
+            photos: photosWithValidLocation.map(p => ({
               filename: p.filename,
               latitude: p.latitude,
               longitude: p.longitude,
@@ -294,7 +314,7 @@ export default function PhotoLabeller() {
     }
   };
 
-  const photosWithLocation = photos.filter(p => p.latitude && p.longitude);
+  const photosWithValidLocation = photos.filter(p => p.hasValidLocation);
 
   return (
     <div className="photo-labeller">
@@ -322,50 +342,73 @@ export default function PhotoLabeller() {
         </div>
       </div>
 
-      {photosWithLocation.length > 0 && (
+      {photos.length > 0 && (
         <>
           <div className="section">
-            <h3>Photos with Geolocation ({photosWithLocation.length})</h3>
+            <h3>Photos ({photos.length})</h3>
 
-            {photosWithLocation.length > 1 && !fetching && (
+            {photosWithValidLocation.length > 1 && !fetching && (
               <button
                 className="btn btn-primary btn-wide"
                 onClick={handleGetAllAddresses}
                 disabled={fetching}
               >
-                📍 Get All Addresses ({photosWithLocation.filter(p => !p.address).length} remaining)
+                📍 Get All Addresses ({photosWithValidLocation.filter(p => !p.address).length} remaining)
               </button>
             )}
 
             <div className="photos-grid">
               {photos.map((photo, idx) => {
-                // Only show photos with geolocation data
-                if (!photo.latitude || !photo.longitude) {
-                  return null;
-                }
-
                 return (
                   <div key={idx} className="photo-card">
                     <div className="photo-thumbnail">
-                      <img
-                        src={`${BACKEND_URL}/image?path=${encodeURIComponent(photo.path)}`}
-                        alt={photo.filename}
-                        onError={(e) => {
-                          e.target.alt = '❌ Image failed to load';
-                          e.target.style.padding = '20px';
-                          e.target.style.color = '#999';
+                      <a
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          openImageViewer(photo);
                         }}
-                      />
+                        className="photo-thumbnail-link"
+                        title="Click to open in new tab"
+                      >
+                        <img
+                          src={`${BACKEND_URL}/image?path=${encodeURIComponent(photo.path)}`}
+                          alt={photo.filename}
+                          onError={(e) => {
+                            e.target.alt = '❌ Image failed to load';
+                            e.target.style.padding = '20px';
+                            e.target.style.color = '#999';
+                          }}
+                        />
+                      </a>
+                    </div>
+                    <div className="photo-metadata">
+                      {photo.width && photo.height && (
+                        <div className="photo-resolution">
+                          {photo.width}×{photo.height}
+                        </div>
+                      )}
+                      {photo.size && (
+                        <div className="photo-size">
+                          {formatFileSize(photo.size)}
+                        </div>
+                      )}
                     </div>
                     <div className="photo-info">
                       <div className="photo-filename">{photo.filename}</div>
-                      <button
-                        className="photo-coords-link"
-                        onClick={() => handleAddressClick(photo.latitude, photo.longitude, photo.address)}
-                        title="Click to view map"
-                      >
-                        📍 {photo.latitude.toFixed(4)}, {photo.longitude.toFixed(4)}
-                      </button>
+                      {photo.hasValidLocation ? (
+                        <button
+                          className="photo-coords-link"
+                          onClick={() => handleAddressClick(photo.latitude, photo.longitude, photo.address)}
+                          title="Click to view map"
+                        >
+                          📍 {photo.latitude.toFixed(4)}, {photo.longitude.toFixed(4)}
+                        </button>
+                      ) : (
+                        <div className="photo-coords-disabled">
+                          📍 No location data
+                        </div>
+                      )}
                       {photo.address && (
                         <div className="photo-address">
                           🏠 {photo.address}
@@ -413,7 +456,7 @@ export default function PhotoLabeller() {
                           {photo.label}
                         </div>
                       )}
-                      {!photo.address && (
+                      {!photo.address && photo.hasValidLocation && (
                         <button
                           className="btn btn-sm btn-secondary"
                           onClick={() => handleGetAddress(idx)}
@@ -437,7 +480,7 @@ export default function PhotoLabeller() {
         </>
       )}
 
-      {photos.length > 0 && photosWithLocation.length === 0 && (
+      {photos.length > 0 && photosWithValidLocation.length === 0 && (
         <div className="alert alert-info">
           No photos with valid geolocation data found (all have lat=0, lon=0, or no metadata)
         </div>

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a1a;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .viewer-container {
+            max-width: 90vw;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .image-section {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+        }
+
+        img {
+            max-width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+            border-radius: 4px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .metadata {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .metadata-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .metadata-label {
+            color: #999;
+            font-size: 14px;
+            font-weight: 500;
+            min-width: 100px;
+        }
+
+        .metadata-value {
+            color: #fff;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+            flex: 1;
+            text-align: right;
+        }
+
+        .filename {
+            font-size: 16px;
+            font-weight: 600;
+            word-break: break-word;
+            color: #4a9eff;
+        }
+
+        .error {
+            background: #3a2a2a;
+            padding: 20px;
+            border-radius: 4px;
+            border-left: 4px solid #ff6b6b;
+            color: #ff8787;
+        }
+
+        .back-button {
+            margin-bottom: 10px;
+            padding: 10px 16px;
+            background: #333;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .back-button:hover {
+            background: #444;
+        }
+    </style>
+</head>
+<body>
+    <div class="viewer-container">
+        <button class="back-button" onclick="window.history.back()">← Back</button>
+        <div class="image-section" id="imageSection">
+            <div class="error">Loading image...</div>
+        </div>
+        <div class="metadata" id="metadata"></div>
+    </div>
+
+    <script>
+        function getQueryParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                path: params.get('path'),
+                filename: params.get('filename'),
+                width: params.get('width'),
+                height: params.get('height'),
+                size: params.get('size')
+            };
+        }
+
+        function formatResolution(width, height) {
+            if (width === 'Unknown' || height === 'Unknown') {
+                return 'Unknown';
+            }
+            return `${width}×${height} px`;
+        }
+
+        function init() {
+            const params = getQueryParams();
+
+            if (!params.path) {
+                document.getElementById('imageSection').innerHTML = '<div class="error">❌ No image path provided</div>';
+                return;
+            }
+
+            const imageUrl = `http://localhost:4000/image?path=${encodeURIComponent(params.path)}`;
+
+            const img = document.createElement('img');
+            img.src = imageUrl;
+            img.alt = params.filename || 'Image';
+
+            img.onerror = () => {
+                document.getElementById('imageSection').innerHTML = '<div class="error">❌ Failed to load image</div>';
+            };
+
+            img.onload = () => {
+                document.getElementById('imageSection').innerHTML = '';
+                document.getElementById('imageSection').appendChild(img);
+            };
+
+            // Display metadata
+            const metadataHtml = `
+                <div class="metadata-row">
+                    <div class="metadata-label">Filename:</div>
+                    <div class="filename">${params.filename || 'Unknown'}</div>
+                </div>
+                <div class="metadata-row">
+                    <div class="metadata-label">Resolution:</div>
+                    <div class="metadata-value">${formatResolution(params.width, params.height)}</div>
+                </div>
+                <div class="metadata-row">
+                    <div class="metadata-label">File Size:</div>
+                    <div class="metadata-value">${params.size || 'Unknown'}</div>
+                </div>
+            `;
+
+            document.getElementById('metadata').innerHTML = metadataHtml;
+        }
+
+        // Initialize when page loads
+        window.addEventListener('load', init);
+        init();
+    </script>
+</body>
+</html>

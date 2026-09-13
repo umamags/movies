@@ -221,6 +221,9 @@ const typeDefs = `
     latitude: Float
     longitude: Float
     address: String
+    width: Int
+    height: Int
+    size: Int
   }
 
   type ImagesListResult {
@@ -1447,6 +1450,18 @@ async function listImagesInFolder(folderPath) {
       const filePath = join(folderPath, filename);
       let latitude = null;
       let longitude = null;
+      let width = null;
+      let height = null;
+
+      // Get file size
+      let size = null;
+      try {
+        const fileStats = await stat(filePath);
+        size = fileStats.size;
+        console.log(`[Photo] ${filename} - size: ${size} bytes`);
+      } catch (err) {
+        console.warn(`[Photo] Failed to get file size for ${filename}: ${err.message}`);
+      }
 
       // Try to get geolocation from metadata
       const metadataPath = `${filePath}.supplemental-metadata.json`;
@@ -1476,16 +1491,59 @@ async function listImagesInFolder(folderPath) {
         }
       }
 
-      // Only include if there's valid geolocation data (not 0,0)
-      if (latitude !== null && longitude !== null && !(latitude === 0 && longitude === 0)) {
-        photoInfos.push({
-          filename: filename,
-          path: filePath,
-          latitude: latitude,
-          longitude: longitude,
-          address: null,
-        });
+      // Try to get image dimensions using exiftool
+      try {
+        const exifData = await exiftool.read(filePath);
+        console.log(`[Photo] ${filename} - exif data keys:`, Object.keys(exifData).filter(k => k.toLowerCase().includes('width') || k.toLowerCase().includes('height')));
+
+        // Try multiple possible field names
+        width = exifData.ImageWidth ||
+                exifData['Image Width'] ||
+                exifData['Exif Image Width'] ||
+                exifData.SourceFile?.match(/\d+/)?.[0];
+
+        height = exifData.ImageHeight ||
+                 exifData['Image Height'] ||
+                 exifData['Exif Image Height'];
+
+        // Try alternative approach for HEIC and other formats
+        if (!width || !height) {
+          // Check for CanonImageWidth, SonyImageWidth, etc
+          const allKeys = Object.keys(exifData);
+          const widthKey = allKeys.find(k => k.endsWith('ImageWidth') || k.endsWith('Width'));
+          const heightKey = allKeys.find(k => k.endsWith('ImageHeight') || k.endsWith('Height'));
+
+          if (widthKey) width = exifData[widthKey];
+          if (heightKey) height = exifData[heightKey];
+        }
+
+        if (width && height) {
+          console.log(`[Photo] ${filename} - dimensions: ${width}x${height}`);
+        } else {
+          console.warn(`[Photo] ${filename} - no dimensions found in exif data. Available fields containing 'width'/'height':`,
+            Object.entries(exifData)
+              .filter(([k]) => k.toLowerCase().includes('width') || k.toLowerCase().includes('height'))
+              .slice(0, 5)
+              .map(([k, v]) => `${k}: ${v}`)
+          );
+        }
+      } catch (err) {
+        console.warn(`[Photo] Failed to get image dimensions for ${filename}: ${err.message}`);
       }
+
+      // Include all photos, even without geolocation data
+      // Frontend will disable location features for photos without valid coordinates
+      photoInfos.push({
+        filename: filename,
+        path: filePath,
+        latitude: latitude,
+        longitude: longitude,
+        address: null,
+        width: width,
+        height: height,
+        size: size,
+        hasValidLocation: latitude !== null && longitude !== null && !(latitude === 0 && longitude === 0),
+      });
     }
 
     return photoInfos;
@@ -1574,6 +1632,8 @@ async function getGeoLocationAddresses(photos) {
 }
 
 async function addLabelToPhotoFile(filePath, label) {
+  const tempPngPath = `/tmp/label_temp_${Date.now()}.png`;
+
   try {
     const expandedPath = filePath.startsWith('~')
       ? filePath.replace('~', os.homedir())
@@ -1585,69 +1645,64 @@ async function addLabelToPhotoFile(filePath, label) {
 
     const fileExt = extname(expandedPath).toLowerCase();
     const isHeic = fileExt === '.heic' || fileExt === '.heif';
+    const dir = expandedPath.substring(0, expandedPath.lastIndexOf('/'));
+    const filename = expandedPath.substring(expandedPath.lastIndexOf('/') + 1);
+    const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+    const outputPath = join(dir, `${nameWithoutExt}_labeled.jpg`);
 
-    // Create backup
-    const backupPath = `${expandedPath}.bkup`;
-    if (!fs.existsSync(backupPath)) {
-      fs.copyFileSync(expandedPath, backupPath);
-      console.log(`[Label] Backup created: ${backupPath}`);
-    }
-
-    // Add text overlay using ImageMagick
     console.log(`[Label] Adding label to: ${expandedPath}`);
-    const escapedLabel = label.replace(/"/g, '\\"');
+    console.log(`[Label] Label text: "${label}"`);
+    console.log(`[Label] Output path: ${outputPath}`);
 
+    let sourceForMagick = expandedPath;
+
+    // Step 1: Convert HEIC to PNG if needed
     if (isHeic) {
-      // Convert HEIC to temp JPEG, add text, then convert back
-      const tempJpg = join(THUMBNAIL_DIR, `temp_${Date.now()}.jpg`);
-      const tempLabeledJpg = join(THUMBNAIL_DIR, `temp_labeled_${Date.now()}.jpg`);
-
-      try {
-        // Convert HEIC to JPEG
-        execSync(`ffmpeg -i "${expandedPath}" "${tempJpg}" -y 2>/dev/null`, {
-          stdio: 'pipe',
-        });
-
-        // Add text overlay to JPEG
-        execSync(
-          `convert "${tempJpg}" -gravity south -background white -splice 0x30 -gravity south -annotate 0x0 "${escapedLabel}" -trim +repage "${tempLabeledJpg}"`,
-          { stdio: 'pipe' }
-        );
-
-        // Convert back to HEIC
-        execSync(`ffmpeg -i "${tempLabeledJpg}" "${expandedPath}" -y 2>/dev/null`, {
-          stdio: 'pipe',
-        });
-
-        // Clean up temp files
-        fs.unlinkSync(tempJpg);
-        fs.unlinkSync(tempLabeledJpg);
-      } catch (err) {
-        // Clean up temp files on error
-        if (fs.existsSync(tempJpg)) fs.unlinkSync(tempJpg);
-        if (fs.existsSync(tempLabeledJpg)) fs.unlinkSync(tempLabeledJpg);
-        throw err;
-      }
-    } else {
-      // Add text directly to JPEG/PNG
-      execSync(
-        `convert "${expandedPath}" -gravity south -background white -splice 0x30 -gravity south -annotate 0x0 "${escapedLabel}" -trim +repage "${expandedPath}"`,
-        { stdio: 'pipe' }
-      );
+      console.log(`[Label] Converting HEIC to PNG: ${tempPngPath}`);
+      execSync(`sips -s format png "${expandedPath}" --out "${tempPngPath}"`, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      sourceForMagick = tempPngPath;
+      console.log(`[Label] HEIC conversion successful`);
     }
 
-    // Add metadata using ExifTool
+    // Step 2: Get image dimensions to calculate font size
+    let imageInfo;
     try {
-      await exiftool.write(expandedPath, {
+      const probeCmd = `identify -format "%wx%h" "${sourceForMagick}"`;
+      const dims = execSync(probeCmd, { encoding: 'utf-8' }).trim();
+      const [width, height] = dims.split('x').map(Number);
+      console.log(`[Label] Image dimensions: ${width}x${height}`);
+
+      // Scale font size based on image width (72pt is for ~3600px width)
+      const fontSize = Math.round((width / 3600) * 72);
+      const offsetY = Math.round((height / 2000) * 25);
+
+      console.log(`[Label] Calculated font size: ${fontSize}, offset: +0+${offsetY}`);
+
+      // Step 3: Add label using magick
+      const magickCmd = `magick "${sourceForMagick}" -gravity South -pointsize ${fontSize} -fill white -font /System/Library/Fonts/Supplemental/Arial.ttf -annotate +0+${offsetY} "${label}" "${outputPath}"`;
+      console.log(`[Label] Magick command: ${magickCmd}`);
+      execSync(magickCmd, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      console.log(`[Label] Label added successfully`);
+    } catch (err) {
+      console.error(`[Label] Image processing error: ${err.message}`);
+      throw err;
+    }
+
+    // Step 4: Add metadata to output file
+    try {
+      await exiftool.write(outputPath, {
         'XMP-dc:Description': label,
       });
-      console.log(`[Label] Metadata updated for: ${expandedPath}`);
+      console.log(`[Label] Metadata updated for: ${outputPath}`);
     } catch (exifErr) {
       console.warn(`[Label] Failed to update metadata: ${exifErr.message}`);
-      // Don't fail the whole operation if metadata update fails
     }
 
-    console.log(`[Label] Successfully added label to: ${expandedPath}`);
+    console.log(`[Label] Successfully added label to: ${outputPath}`);
     return {
       success: true,
       message: 'Label added successfully',
@@ -1655,11 +1710,25 @@ async function addLabelToPhotoFile(filePath, label) {
   } catch (error) {
     console.error(`[Label] Error adding label: ${error.message}`);
     throw error;
+  } finally {
+    // Clean up temp PNG file
+    if (fs.existsSync(tempPngPath)) {
+      try {
+        fs.unlinkSync(tempPngPath);
+        console.log(`[Label] Temp file deleted: ${tempPngPath}`);
+      } catch (err) {
+        console.warn(`[Label] Failed to delete temp file: ${err.message}`);
+      }
+    }
   }
 }
 
 // Server setup
 const app = express();
+
+// Serve static files from frontend public directory
+const publicPath = join(__dirname, '../../frontend/public');
+app.use(express.static(publicPath));
 
 // Enable CORS
 app.use((req, res, next) => {
