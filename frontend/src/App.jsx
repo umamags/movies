@@ -5,6 +5,7 @@ import SplitVideo from './components/SplitVideo';
 import EditVideo from './components/EditVideo';
 import ExtractAudio from './components/ExtractAudio';
 import DeleteAudio from './components/DeleteAudio';
+import AddAudioToVideo from './components/AddAudioToVideo';
 import YoutubeDownloader from './components/YoutubeDownloader';
 import YoutubePlaylistDownloader from './components/YoutubePlaylistDownloader';
 import YoutubeSubscriptions from './components/YoutubeSubscriptions';
@@ -75,13 +76,19 @@ export default function App() {
             className={`tab ${activeTab === 'extractAudio' ? 'active' : ''}`}
             onClick={() => setActiveTab('extractAudio')}
           >
-            Extract Audio
+            Extract Audio from Video
           </button>
           <button
             className={`tab ${activeTab === 'deleteAudio' ? 'active' : ''}`}
             onClick={() => setActiveTab('deleteAudio')}
           >
-            Delete Audio
+            Delete Audio from Video
+          </button>
+          <button
+            className={`tab ${activeTab === 'addAudio' ? 'active' : ''}`}
+            onClick={() => setActiveTab('addAudio')}
+          >
+            Add Audio to Video
           </button>
           <button
             className={`tab ${activeTab === 'youtube' ? 'active' : ''}`}
@@ -130,6 +137,9 @@ export default function App() {
           )}
           {activeTab === 'deleteAudio' && (
             <DeleteAudio settings={settings} setSettings={setSettings} />
+          )}
+          {activeTab === 'addAudio' && (
+            <AddAudioToVideo settings={settings} setSettings={setSettings} />
           )}
           {activeTab === 'youtube' && <YoutubeDownloader />}
           {activeTab === 'youtubePlaylist' && <YoutubePlaylistDownloader />}

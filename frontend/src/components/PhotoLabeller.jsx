@@ -6,10 +6,14 @@ import './PhotoLabeller.css';
 
 const BACKEND_URL = 'http://localhost:4000';
 const STORAGE_KEY = 'photoLabeller_folderPath';
+const SUBFOLDERS_KEY = 'photoLabeller_includeSubfolders';
 
 export default function PhotoLabeller() {
   const [folderPath, setFolderPath] = useState(() => {
     return localStorage.getItem(STORAGE_KEY) || '';
+  });
+  const [includeSubfolders, setIncludeSubfolders] = useState(() => {
+    return localStorage.getItem(SUBFOLDERS_KEY) === 'true';
   });
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -33,6 +37,10 @@ export default function PhotoLabeller() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, folderPath);
   }, [folderPath]);
+
+  useEffect(() => {
+    localStorage.setItem(SUBFOLDERS_KEY, includeSubfolders);
+  }, [includeSubfolders]);
 
   const handleFolderSelect = (folder) => {
     setFolderPath(folder.path || folder.name);
@@ -226,13 +234,14 @@ export default function PhotoLabeller() {
 
     try {
       const query = `
-        query ListImagesInFolder($folderPath: String!) {
-          listImagesInFolder(folderPath: $folderPath) {
+        query ListImagesInFolder($folderPath: String!, $includeSubfolders: Boolean) {
+          listImagesInFolder(folderPath: $folderPath, includeSubfolders: $includeSubfolders) {
             success
             message
             photos {
               filename
               path
+              subfolder
               latitude
               longitude
               address
@@ -249,7 +258,7 @@ export default function PhotoLabeller() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query,
-          variables: { folderPath }
+          variables: { folderPath, includeSubfolders }
         }),
       });
 
@@ -415,12 +424,23 @@ export default function PhotoLabeller() {
           View photos with their geolocation data and fetch addresses from LocationIQ service.
         </p>
 
-        <FileSelector
-          selectedFile={folderPath ? { name: folderPath, path: folderPath } : null}
-          onFileSelect={handleFolderSelect}
-          disabled={loading || fetching}
-          title="Folder Path"
-        />
+        <div className="folder-path-row">
+          <FileSelector
+            selectedFile={folderPath ? { name: folderPath, path: folderPath } : null}
+            onFileSelect={handleFolderSelect}
+            disabled={loading || fetching}
+            title="Folder Path"
+          />
+          <label className="subfolder-checkbox">
+            <input
+              type="checkbox"
+              checked={includeSubfolders}
+              onChange={(e) => setIncludeSubfolders(e.target.checked)}
+              disabled={loading || fetching}
+            />
+            Include sub folders
+          </label>
+        </div>
 
         <div className="controls">
           <button
@@ -450,8 +470,9 @@ export default function PhotoLabeller() {
 
             <div className="photos-grid">
               {photos.map((photo, idx) => {
+                const isLabelled = photo.filename.toLowerCase().includes('labelled');
                 return (
-                  <div key={idx} className="photo-card">
+                  <div key={idx} className={`photo-card ${isLabelled ? 'photo-card-labelled' : ''}`}>
                     <div className="photo-thumbnail">
                       <a
                         href="#"
@@ -486,7 +507,10 @@ export default function PhotoLabeller() {
                       )}
                     </div>
                     <div className="photo-info">
-                      <div className="photo-filename">{photo.filename}</div>
+                      {photo.subfolder && (
+                        <div className="photo-subfolder">{photo.subfolder}</div>
+                      )}
+                      <div className={`photo-filename ${isLabelled ? 'filename-labelled' : ''}`}>{photo.filename}</div>
                       {photo.hasValidLocation ? (
                         <button
                           className="photo-coords-link"

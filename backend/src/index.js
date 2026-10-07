@@ -84,7 +84,7 @@ const typeDefs = `
     getVideoDuration(filePath: String!): Float
     fetchChannelVideos(channelUrl: String!, pageToken: String, searchQuery: String): YoutubeChannelVideosResult!
     listFilesInFolder(folderPath: String!): FileListResult!
-    listImagesInFolder(folderPath: String!): ImagesListResult!
+    listImagesInFolder(folderPath: String!, includeSubfolders: Boolean): ImagesListResult!
     getYoutubeSubscriptions: FetchSubscriptionsResult!
   }
 
@@ -101,6 +101,12 @@ const typeDefs = `
   }
 
   type DeleteAudioResult {
+    success: Boolean!
+    message: String!
+    outputFile: String
+  }
+
+  type AddAudioToVideoResult {
     success: Boolean!
     message: String!
     outputFile: String
@@ -186,6 +192,12 @@ const typeDefs = `
     filePath: String!
   }
 
+  input AddAudioToVideoInput {
+    videoPath: String!
+    audioPath: String!
+    mode: String!
+  }
+
   input DeletionRangeInput {
     startTime: String!
     endTime: String!
@@ -219,6 +231,7 @@ const typeDefs = `
   type PhotoInfo {
     filename: String!
     path: String!
+    subfolder: String
     latitude: Float
     longitude: Float
     address: String
@@ -285,6 +298,7 @@ const typeDefs = `
     splitVideo(input: SplitVideoInput!): SplitResult!
     extractAudio(input: ExtractAudioInput!): ExtractAudioResult!
     deleteAudio(input: DeleteAudioInput!): DeleteAudioResult!
+    addAudioToVideo(input: AddAudioToVideoInput!): AddAudioToVideoResult!
     editVideo(input: EditVideoInput!): EditVideoResult!
     downloadYoutube(url: String!): YoutubeDownloadResult!
     downloadMultipleYoutube(urls: [String!]!): YoutubeDownloadMultipleResult!
@@ -456,10 +470,10 @@ const resolvers = {
       }
     },
 
-    listImagesInFolder: async (_, { folderPath }) => {
+    listImagesInFolder: async (_, { folderPath, includeSubfolders }) => {
       try {
         const expandedPath = expandPath(folderPath);
-        const photos = await listImagesInFolder(expandedPath);
+        const photos = await listImagesInFolder(expandedPath, includeSubfolders);
         return {
           success: true,
           message: 'Images listed successfully',
@@ -691,6 +705,21 @@ const resolvers = {
       }
     },
 
+    addAudioToVideo: async (_, { input }) => {
+      try {
+        const expandedVideoPath = expandPath(input.videoPath);
+        const expandedAudioPath = expandPath(input.audioPath);
+        const result = await addAudioToVideoFile(expandedVideoPath, expandedAudioPath, input.mode);
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          message: error.message,
+          outputFile: null,
+        };
+      }
+    },
+
     editVideo: async (_, { input }) => {
       try {
         const expandedFilePath = expandPath(input.filePath);
@@ -778,6 +807,9 @@ const resolvers = {
     addCaptionToPhoto: async (_, { filePath, caption }) => {
       try {
         const result = await addCaptionToPhotoFile(filePath, caption);
+        if (result.success) {
+          await cleanupExtraImages(filePath);
+        }
         return result;
       } catch (error) {
         return {
@@ -1049,6 +1081,57 @@ async function deleteAudioFile(filePath) {
   } catch (error) {
     console.error('Failed to delete audio:', error.message);
     throw new Error(`Failed to delete audio: ${error.message}`);
+  }
+}
+
+async function addAudioToVideoFile(videoPath, audioPath, mode) {
+  try {
+    console.log(`Adding audio to video: ${videoPath}`);
+    console.log(`Audio file: ${audioPath}`);
+    console.log(`Mode: ${mode}`);
+
+    const fileDir = videoPath.substring(0, videoPath.lastIndexOf('/'));
+    const fileNameFull = videoPath.substring(videoPath.lastIndexOf('/') + 1);
+    const fileExt = extname(fileNameFull);
+    const fileNameWithoutExt = fileNameFull.substring(0, fileNameFull.length - fileExt.length);
+
+    const videoOutputPath = join(fileDir, `${fileNameWithoutExt}-edited${fileExt}`);
+
+    // Check if video has audio stream
+    let hasVideoAudio = false;
+    try {
+      const probeCmd = `ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "${videoPath}"`;
+      const probeOutput = execSync(probeCmd, { encoding: 'utf-8', stdio: 'pipe' });
+      hasVideoAudio = probeOutput.trim().length > 0;
+      console.log(`Video has audio track: ${hasVideoAudio}`);
+    } catch (e) {
+      console.log(`Could not determine if video has audio, assuming no audio`);
+      hasVideoAudio = false;
+    }
+
+    let ffmpegCmd;
+
+    if (mode === 'mix' && hasVideoAudio) {
+      // Mix audio: combine both video and audio tracks (only if video has audio)
+      ffmpegCmd = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[0:a][1:a]amerge=inputs=2[a]" -map 0:v:0 -map "[a]" -c:v copy -c:a aac "${videoOutputPath}" -y`;
+    } else {
+      // Replace mode or mix mode with no existing audio: use new audio, keep video
+      ffmpegCmd = `ffmpeg -i "${videoPath}" -i "${audioPath}" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 "${videoOutputPath}" -y`;
+    }
+
+    console.log(`Running: ${ffmpegCmd}`);
+    execSync(ffmpegCmd, { stdio: 'pipe' });
+
+    console.log(`Audio added to video: ${videoOutputPath}`);
+
+    return {
+      success: true,
+      message: `Audio ${mode === 'mix' && hasVideoAudio ? 'mixed' : 'replaced'} successfully`,
+      outputFile: videoOutputPath,
+    };
+  } catch (error) {
+    console.error('Failed to add audio to video:', error.message);
+    throw new Error(`Failed to add audio to video: ${error.message}`);
   }
 }
 
@@ -1495,122 +1578,135 @@ async function processTimestamps(folderPath, mode, filePairs) {
   };
 }
 
-async function listImagesInFolder(folderPath) {
+async function listImagesInFolder(folderPath, includeSubfolders = false) {
   try {
     const imageFormats = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'];
-    const files = fs.readdirSync(folderPath);
     const photoInfos = [];
 
-    for (const filename of files) {
-      // Skip metadata files and hidden files
-      if (filename.endsWith('.supplemental-metadata.json') || filename.startsWith('.')) {
-        continue;
-      }
+    async function scanFolder(currentPath) {
+      const files = fs.readdirSync(currentPath);
+      const relativePath = currentPath === folderPath ? '' : currentPath.replace(folderPath, '').replace(/^\//, '');
 
-      const ext = extname(filename).toLowerCase();
-      if (!imageFormats.includes(ext)) {
-        continue;
-      }
-
-      const filePath = join(folderPath, filename);
-      let latitude = null;
-      let longitude = null;
-      let width = null;
-      let height = null;
-
-      // Get file size
-      let size = null;
-      try {
-        const fileStats = await stat(filePath);
-        size = fileStats.size;
-        console.log(`[Photo] ${filename} - size: ${size} bytes`);
-      } catch (err) {
-        console.warn(`[Photo] Failed to get file size for ${filename}: ${err.message}`);
-      }
-
-      // Try to get geolocation from metadata
-      const metadataPath = `${filePath}.supplemental-metadata.json`;
-      let metadataFilePath = metadataPath;
-
-      // If file's own metadata doesn't exist, try to find related metadata
-      if (!fs.existsSync(metadataPath)) {
-        const fileNameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
-        const relatedMetadata = files.find(f =>
-          f.startsWith(fileNameWithoutExt) && f.endsWith('.supplemental-metadata.json')
-        );
-        if (relatedMetadata) {
-          metadataFilePath = join(folderPath, relatedMetadata);
+      for (const filename of files) {
+        // Skip metadata files and hidden files
+        if (filename.endsWith('.supplemental-metadata.json') || filename.startsWith('.')) {
+          continue;
         }
-      }
 
-      if (fs.existsSync(metadataFilePath)) {
+        const filePath = join(currentPath, filename);
+        const fileStats = await stat(filePath);
+
+        // If includeSubfolders is true and this is a directory, recursively scan it
+        if (includeSubfolders && fileStats.isDirectory()) {
+          await scanFolder(filePath);
+          continue;
+        }
+
+        const ext = extname(filename).toLowerCase();
+        if (!imageFormats.includes(ext)) {
+          continue;
+        }
+
+        let latitude = null;
+        let longitude = null;
+        let width = null;
+        let height = null;
+
+        // Get file size
+        let size = null;
         try {
-          const metadataContent = fs.readFileSync(metadataFilePath, 'utf-8');
-          const metadata = JSON.parse(metadataContent);
-          if (metadata.geoData && metadata.geoData.latitude !== undefined && metadata.geoData.longitude !== undefined) {
-            latitude = metadata.geoData.latitude;
-            longitude = metadata.geoData.longitude;
+          size = fileStats.size;
+          console.log(`[Photo] ${filename} - size: ${size} bytes`);
+        } catch (err) {
+          console.warn(`[Photo] Failed to get file size for ${filename}: ${err.message}`);
+        }
+
+        // Try to get geolocation from metadata
+        const metadataPath = `${filePath}.supplemental-metadata.json`;
+        let metadataFilePath = metadataPath;
+
+        // If file's own metadata doesn't exist, try to find related metadata
+        if (!fs.existsSync(metadataPath)) {
+          const fileNameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+          const relatedMetadata = files.find(f =>
+            f.startsWith(fileNameWithoutExt) && f.endsWith('.supplemental-metadata.json')
+          );
+          if (relatedMetadata) {
+            metadataFilePath = join(currentPath, relatedMetadata);
+          }
+        }
+
+        if (fs.existsSync(metadataFilePath)) {
+          try {
+            const metadataContent = fs.readFileSync(metadataFilePath, 'utf-8');
+            const metadata = JSON.parse(metadataContent);
+            if (metadata.geoData && metadata.geoData.latitude !== undefined && metadata.geoData.longitude !== undefined) {
+              latitude = metadata.geoData.latitude;
+              longitude = metadata.geoData.longitude;
+            }
+          } catch (err) {
+            // Metadata parsing failed, continue without geolocation
+          }
+        }
+
+        // Try to get image dimensions using exiftool
+        try {
+          const exifData = await exiftool.read(filePath);
+          console.log(`[Photo] ${filename} - exif data keys:`, Object.keys(exifData).filter(k => k.toLowerCase().includes('width') || k.toLowerCase().includes('height')));
+
+          // Try multiple possible field names
+          width = exifData.ImageWidth ||
+                  exifData['Image Width'] ||
+                  exifData['Exif Image Width'] ||
+                  exifData.SourceFile?.match(/\d+/)?.[0];
+
+          height = exifData.ImageHeight ||
+                   exifData['Image Height'] ||
+                   exifData['Exif Image Height'];
+
+          // Try alternative approach for HEIC and other formats
+          if (!width || !height) {
+            // Check for CanonImageWidth, SonyImageWidth, etc
+            const allKeys = Object.keys(exifData);
+            const widthKey = allKeys.find(k => k.endsWith('ImageWidth') || k.endsWith('Width'));
+            const heightKey = allKeys.find(k => k.endsWith('ImageHeight') || k.endsWith('Height'));
+
+            if (widthKey) width = exifData[widthKey];
+            if (heightKey) height = exifData[heightKey];
+          }
+
+          if (width && height) {
+            console.log(`[Photo] ${filename} - dimensions: ${width}x${height}`);
+          } else {
+            console.warn(`[Photo] ${filename} - no dimensions found in exif data. Available fields containing 'width'/'height':`,
+              Object.entries(exifData)
+                .filter(([k]) => k.toLowerCase().includes('width') || k.toLowerCase().includes('height'))
+                .slice(0, 5)
+                .map(([k, v]) => `${k}: ${v}`)
+            );
           }
         } catch (err) {
-          // Metadata parsing failed, continue without geolocation
+          console.warn(`[Photo] Failed to get image dimensions for ${filename}: ${err.message}`);
         }
+
+        // Include all photos, even without geolocation data
+        // Frontend will disable location features for photos without valid coordinates
+        photoInfos.push({
+          filename: filename,
+          path: filePath,
+          subfolder: relativePath,
+          latitude: latitude,
+          longitude: longitude,
+          address: null,
+          width: width,
+          height: height,
+          size: size,
+          hasValidLocation: latitude !== null && longitude !== null && !(latitude === 0 && longitude === 0),
+        });
       }
-
-      // Try to get image dimensions using exiftool
-      try {
-        const exifData = await exiftool.read(filePath);
-        console.log(`[Photo] ${filename} - exif data keys:`, Object.keys(exifData).filter(k => k.toLowerCase().includes('width') || k.toLowerCase().includes('height')));
-
-        // Try multiple possible field names
-        width = exifData.ImageWidth ||
-                exifData['Image Width'] ||
-                exifData['Exif Image Width'] ||
-                exifData.SourceFile?.match(/\d+/)?.[0];
-
-        height = exifData.ImageHeight ||
-                 exifData['Image Height'] ||
-                 exifData['Exif Image Height'];
-
-        // Try alternative approach for HEIC and other formats
-        if (!width || !height) {
-          // Check for CanonImageWidth, SonyImageWidth, etc
-          const allKeys = Object.keys(exifData);
-          const widthKey = allKeys.find(k => k.endsWith('ImageWidth') || k.endsWith('Width'));
-          const heightKey = allKeys.find(k => k.endsWith('ImageHeight') || k.endsWith('Height'));
-
-          if (widthKey) width = exifData[widthKey];
-          if (heightKey) height = exifData[heightKey];
-        }
-
-        if (width && height) {
-          console.log(`[Photo] ${filename} - dimensions: ${width}x${height}`);
-        } else {
-          console.warn(`[Photo] ${filename} - no dimensions found in exif data. Available fields containing 'width'/'height':`,
-            Object.entries(exifData)
-              .filter(([k]) => k.toLowerCase().includes('width') || k.toLowerCase().includes('height'))
-              .slice(0, 5)
-              .map(([k, v]) => `${k}: ${v}`)
-          );
-        }
-      } catch (err) {
-        console.warn(`[Photo] Failed to get image dimensions for ${filename}: ${err.message}`);
-      }
-
-      // Include all photos, even without geolocation data
-      // Frontend will disable location features for photos without valid coordinates
-      photoInfos.push({
-        filename: filename,
-        path: filePath,
-        latitude: latitude,
-        longitude: longitude,
-        address: null,
-        width: width,
-        height: height,
-        size: size,
-        hasValidLocation: latitude !== null && longitude !== null && !(latitude === 0 && longitude === 0),
-      });
     }
 
+    await scanFolder(folderPath);
     return photoInfos;
   } catch (error) {
     throw new Error(`Failed to list images: ${error.message}`);
@@ -1841,6 +1937,42 @@ async function addCaptionToPhotoFile(filePath, caption) {
   } catch (error) {
     console.error(`[Caption] Error adding caption: ${error.message}`);
     throw error;
+  }
+}
+
+async function cleanupExtraImages(filePath) {
+  try {
+    const expandedPath = filePath.startsWith('~')
+      ? filePath.replace('~', os.homedir())
+      : filePath;
+
+    const fileDir = expandedPath.substring(0, expandedPath.lastIndexOf('/'));
+    const filename = expandedPath.substring(expandedPath.lastIndexOf('/') + 1);
+    const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+
+    console.log(`[Cleanup] Cleaning up extra images for: ${filename}`);
+
+    // Files to delete: _labeled.jpg (American spelling) and _labeled.jpg_original
+    const filesToDelete = [
+      join(fileDir, `${nameWithoutExt}_labeled.jpg`),
+      join(fileDir, `${nameWithoutExt}_labeled.jpg_original`),
+    ];
+
+    for (const fileToDelete of filesToDelete) {
+      if (fs.existsSync(fileToDelete)) {
+        try {
+          fs.unlinkSync(fileToDelete);
+          console.log(`[Cleanup] Deleted: ${fileToDelete}`);
+        } catch (err) {
+          console.warn(`[Cleanup] Failed to delete ${fileToDelete}: ${err.message}`);
+        }
+      }
+    }
+
+    console.log(`[Cleanup] Cleanup completed for: ${filename}`);
+  } catch (error) {
+    console.error(`[Cleanup] Error cleaning up images: ${error.message}`);
+    // Don't throw - cleanup failures shouldn't fail the caption operation
   }
 }
 
