@@ -93,6 +93,16 @@
   color: #333;
 }
 
+.subscriptions-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.subscriptions-table th.sortable:hover {
+  background: #ebebeb;
+}
+
 .subscriptions-table tbody tr {
   border-bottom: 1px solid #eee;
   transition: background 0.2s;
@@ -197,4 +207,73 @@
   background: #ccc;
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.cache-info {
+  margin-left: 12px;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.channel-title-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #1a73e8;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.channel-title-link:hover {
+  color: #0b4fb3;
+}
+
+.channel-videos-panel {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 12px 0;
+  background: #fafafa;
+}
+
+.channel-videos-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.channel-videos-header h3 {
+  margin: 0;
+}
+
+.videos-table td.video-description {
+  max-width: 360px;
+  color: #555;
+  font-size: 0.9em;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.videos-table td.video-download {
+  white-space: nowrap;
+}
+
+.video-download-message {
+  margin-top: 4px;
+  font-size: 0.85em;
+  white-space: normal;
+  max-width: 220px;
+}
+
+.video-download-message.complete {
+  color: #1e7e34;
+}
+
+.video-download-message.failed {
+  color: #c82333;
 }

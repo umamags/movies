@@ -150,6 +150,7 @@ def fetch_channel_videos(channel_url, page_token=None, search_query=""):
                 "id": video_id,
                 "title": title,
                 "published": item["snippet"]["publishedAt"],
+                "description": item["snippet"].get("description", ""),
                 "thumbnail": item["snippet"]["thumbnails"]["medium"]["url"],
             })
 

@@ -130,6 +130,7 @@ const typeDefs = `
     duration: String!
     views: Int!
     published: String!
+    description: String
     thumbnail: String!
   }
 
@@ -250,6 +251,9 @@ const typeDefs = `
     channel_title: String!
     handle: String!
     channel_id: String!
+    subscribed_at: String
+    video_count: Int
+    last_published_at: String
   }
 
   type FetchSubscriptionsResult {
@@ -2005,6 +2009,36 @@ async function deletePhotoFile(filePath) {
   }
 }
 
+// Split one CSV line into fields, honouring double-quoted fields (which may contain commas)
+// and keeping empty fields so column positions stay aligned.
+function parseCsvLine(line) {
+  const fields = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      fields.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current.trim());
+  return fields;
+}
+
 async function fetchYoutubeSubscriptions() {
   try {
     console.log('[YouTube] Fetching subscriptions...');
@@ -2053,14 +2087,19 @@ async function fetchYoutubeSubscriptions() {
     }
 
     // Parse header
-    const headers = lines[0].split(',').map(h => h.trim());
+    const headers = parseCsvLine(lines[0]).map(h => h.trim());
     const titleIdx = headers.indexOf('channel_title');
     const handleIdx = headers.indexOf('handle');
     const idIdx = headers.indexOf('channel_id');
+    const subscribedIdx = headers.indexOf('subscribed_at');
+    const videoCountIdx = headers.indexOf('video_count');
+    const lastPublishedIdx = headers.indexOf('last_published_at');
 
     if (titleIdx === -1 || handleIdx === -1 || idIdx === -1) {
       throw new Error('CSV missing required columns: channel_title, handle, channel_id');
     }
+
+    const field = (row, idx) => (idx === -1 ? '' : row[idx] || '');
 
     // Parse rows
     const subscriptions = [];
@@ -2068,17 +2107,17 @@ async function fetchYoutubeSubscriptions() {
       const line = lines[i].trim();
       if (!line) continue;
 
-      // Handle CSV with quoted fields
-      const parts = line.match(/("([^"]*)"|[^,]+)/g) || [];
-      const row = parts.map(p => p.replace(/^"|"$/g, '').trim());
+      const row = parseCsvLine(line);
+      const videoCount = parseInt(field(row, videoCountIdx), 10);
 
-      if (row.length > Math.max(titleIdx, handleIdx, idIdx)) {
-        subscriptions.push({
-          channel_title: row[titleIdx] || '',
-          handle: row[handleIdx] || '',
-          channel_id: row[idIdx] || '',
-        });
-      }
+      subscriptions.push({
+        channel_title: field(row, titleIdx),
+        handle: field(row, handleIdx),
+        channel_id: field(row, idIdx),
+        subscribed_at: field(row, subscribedIdx) || null,
+        video_count: Number.isNaN(videoCount) ? null : videoCount,
+        last_published_at: field(row, lastPublishedIdx) || null,
+      });
     }
 
     console.log('[YouTube] Parsed', subscriptions.length, 'subscriptions');
